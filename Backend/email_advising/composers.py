@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import textwrap
 from typing import Callable, Dict, Sequence, Tuple
 
 from .models import AdvisorReference, KnowledgeArticle
+
+logger = logging.getLogger(__name__)
 
 
 class EmailComposer:
@@ -27,10 +30,6 @@ class EmailComposer:
 class TemplateEmailComposer(EmailComposer):
     """Default composer that relies on the knowledge base templates."""
 
-    def __init__(self, include_references: bool = True, reference_heading: str = "References") -> None:
-        self.include_references = include_references
-        self.reference_heading = reference_heading
-
     def compose(
         self,
         *,
@@ -43,22 +42,21 @@ class TemplateEmailComposer(EmailComposer):
     ) -> Tuple[str, str]:
         del article, query, metadata  # unused by template-based composition
         body = base_body.rstrip()
-        if self.include_references and references:
-            reference_text = self.format_references(references)
-            body = body + "\n\n" + reference_text
+        links = [r for r in references if r.url]
+        if links:
+            body = body + "\n\n" + self._format_links(links)
         return base_subject, body
 
-    def format_references(self, references: Sequence[AdvisorReference]) -> str:
-        lines = [self.reference_heading + ":"]
-        for index, reference in enumerate(references, start=1):
-            url_part = f" ({reference.url})" if reference.url else ""
-            snippet_part = f" — {reference.snippet}" if reference.snippet else ""
-            lines.append(f"[{index}] {reference.title}{url_part}{snippet_part}")
+    @staticmethod
+    def _format_links(references: Sequence[AdvisorReference]) -> str:
+        lines = ["Useful resources:"]
+        for ref in references:
+            lines.append(f"• {ref.title}: {ref.url}")
         return "\n".join(lines)
 
 
-class ClaudeGenerativeComposer(EmailComposer):
-    """Generate emails from scratch using Claude, without relying on templates."""
+class LLMGenerativeComposer(EmailComposer):
+    """Generate emails from scratch using an LLM, without relying on templates."""
 
     def __init__(
         self,
@@ -83,8 +81,8 @@ class ClaudeGenerativeComposer(EmailComposer):
         prompt = self._build_prompt(article, query, metadata, references)
         try:
             raw_response = self.llm(prompt)
-        except Exception:
-            # Fallback to template if Claude fails
+        except Exception as e:
+            logger.error("LLM call failed, falling back to template: %s", e)
             return self.fallback_composer.compose(
                 article=article,
                 base_subject=base_subject,
@@ -94,6 +92,9 @@ class ClaudeGenerativeComposer(EmailComposer):
                 references=references,
             )
         subject, body = self._parse_response(raw_response, base_subject, base_body)
+        links = [r for r in references if r.url]
+        if links:
+            body = body.rstrip() + "\n\n" + TemplateEmailComposer._format_links(links)
         return subject, body
 
     def _build_prompt(
@@ -138,7 +139,12 @@ Knowledge Base Article:
             Supporting References (cite these using [number] notation in your response):
             {reference_block}
 
-            Write a {self.style} email response. Be helpful, warm, and specific. Include relevant details from the knowledge base article and naturally cite the references where appropriate using [1], [2], etc.
+            Write a {self.style} email response. Be helpful, warm, and specific. Include relevant details from the knowledge base article. Do not include a references or links section — links will be shown separately in the UI.
+
+            Always end the body with exactly this sign-off on its own lines, preceded by a blank line:
+
+            Best regards,
+            Academic Advising Team
 
             Respond in JSON with keys "subject" and "body" only. Do not include markdown fences.
             """
@@ -249,4 +255,4 @@ class LLMEmailComposer(EmailComposer):
         return subject, body
 
 
-__all__ = ["EmailComposer", "TemplateEmailComposer", "ClaudeGenerativeComposer", "LLMEmailComposer"]
+__all__ = ["EmailComposer", "TemplateEmailComposer", "LLMGenerativeComposer", "LLMEmailComposer"]

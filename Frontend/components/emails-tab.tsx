@@ -29,6 +29,7 @@ export type Email = {
   confidence: number; // 0–1
   status: EmailStatus;
   suggested_reply: string;
+  references?: { title: string; url: string | null }[];
   received_at: string; // ISO timestamp from backend
   approved_at?: string | null; // ISO timestamp when approved/sent
   assigned_to?: string | null;
@@ -1314,13 +1315,13 @@ export default function EmailsTab() {
               {canEditSelectedEmail ? (
                 // Editable textarea for any unsent email
                 <textarea
-                  className="w-full border border-border rounded-md p-2 text-sm min-h-40 resize-vertical focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full border border-border rounded-md p-2 text-sm min-h-64 resize-vertical focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   value={replyDraft}
                   onChange={(e) => setReplyDraft(e.target.value)}
                 />
               ) : (
                 // Read-only for approved/sent emails
-                <div className="text-sm border border-border rounded-md p-3 bg-muted/40 whitespace-pre-wrap">
+                <div className="text-sm border border-border rounded-md p-3 bg-muted/40 whitespace-pre-wrap min-h-64">
                   {selectedEmail.suggested_reply}
                 </div>
               )}

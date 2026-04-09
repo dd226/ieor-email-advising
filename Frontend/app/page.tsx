@@ -7,8 +7,9 @@ import MetricsCards from "@/components/metrics-cards";
 import EmailsTab from "@/components/emails-tab";
 import AnalyticsTab from "@/components/analytics-tab";
 import SettingsTab from "@/components/settings-tab";
+import ExpoTab from "@/components/expo-tab";
 
-const VALID_TABS = new Set(["dashboard", "emails", "analytics", "settings"]);
+const VALID_TABS = new Set(["dashboard", "emails", "analytics", "settings", "expo"]);
 
 export default function Page() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -65,6 +66,9 @@ export default function Page() {
 
           {/* Settings Tab */}
           {activeTab === "settings" && <div className="animate-fade-in"><SettingsTab /></div>}
+
+          {/* Senior Design Expo Tab */}
+          {activeTab === "expo" && <div className="animate-fade-in"><ExpoTab /></div>}
         </main>
       </div>
     </div>

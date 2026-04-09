@@ -1,5 +1,5 @@
 "use client"
-import { LayoutDashboard, Mail, BarChart3, Settings } from "lucide-react"
+import { LayoutDashboard, Mail, BarChart3, Settings, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SidebarNavProps {
@@ -13,6 +13,7 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
     { id: "emails", label: "Email Management", icon: Mail },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: Settings },
+    { id: "expo", label: "Senior Design Expo", icon: Sparkles },
   ]
 
   return (

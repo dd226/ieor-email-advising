@@ -30,11 +30,11 @@ from email_advising import (
     KnowledgeArticle,
     KnowledgeBase,
     PersonalEmailDetector,
-    ClaudeGenerativeComposer,
+    LLMGenerativeComposer,
     load_knowledge_base,
     load_reference_corpus,
 )
-from email_advising.llm import create_claude_llm
+from email_advising.llm import create_openai_llm
 
 from sqlalchemy import (
     create_engine,
@@ -180,18 +180,18 @@ try:
 except Exception:
     pass
 
-# Initialize email composer: try Claude, fallback to template-only
+# Initialize email composer: try OpenAI, fallback to template-only
 composer = None
 try:
-    claude_llm = create_claude_llm()
+    openai_llm = create_openai_llm()
     from email_advising.composers import TemplateEmailComposer
-    composer = ClaudeGenerativeComposer(
-        llm=claude_llm,
+    composer = LLMGenerativeComposer(
+        llm=openai_llm,
         style="professional",
         fallback_composer=TemplateEmailComposer(),
     )
 except ValueError:
-    # ANTHROPIC_API_KEY not set; fall back to template-only
+    # OPENAI_API_KEY not set; fall back to template-only
     pass
 
 advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=embedder)
@@ -654,6 +654,7 @@ class Email(BaseModel):
     confidence: float
     status: EmailStatus
     suggested_reply: str
+    references: List[Dict[str, Optional[str]]] = []
     received_at: datetime
     approved_at: Optional[datetime] = None
     assigned_to: Optional[str] = None
@@ -738,6 +739,7 @@ class EmailORM(Base):
     confidence = Column(Float, nullable=False)
     status = Column(SAEnum(EmailStatus), nullable=False)
     suggested_reply = Column(Text, nullable=False)
+    references_json = Column(Text, nullable=True)  # JSON-serialized list of {title, url}
     received_at = Column(DateTime, nullable=False, index=True)
     approved_at = Column(DateTime, nullable=True)  # when advisor approved/sent
     assigned_to = Column(String, nullable=True)  # advisor assigned to this email
@@ -753,6 +755,9 @@ def _migrate_db():
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(emails)"))}
         if "assigned_to" not in existing:
             conn.execute(text("ALTER TABLE emails ADD COLUMN assigned_to VARCHAR"))
+            conn.commit()
+        if "references_json" not in existing:
+            conn.execute(text("ALTER TABLE emails ADD COLUMN references_json TEXT"))
             conn.commit()
 
 
@@ -914,6 +919,10 @@ def get_db() -> Session:
 
 
 def orm_to_schema(email_obj: EmailORM) -> Email:
+    try:
+        refs = json.loads(email_obj.references_json) if email_obj.references_json else []
+    except (json.JSONDecodeError, TypeError):
+        refs = []
     return Email(
         id=email_obj.id,
         student_name=email_obj.student_name,
@@ -924,6 +933,7 @@ def orm_to_schema(email_obj: EmailORM) -> Email:
         confidence=email_obj.confidence,
         status=email_obj.status,
         suggested_reply=email_obj.suggested_reply,
+        references=refs,
         received_at=email_obj.received_at,
         approved_at=email_obj.approved_at,
         assigned_to=email_obj.assigned_to,
@@ -1147,6 +1157,11 @@ def ingest_email(email_in: EmailIn):
                 else EmailStatus.review
             )
 
+        refs_json = json.dumps([
+            {"title": r.title, "url": r.url}
+            for r in result.references if r.url
+        ]) if not guardrail.is_personal else None
+
         email_obj = EmailORM(
             student_name=email_in.student_name,
             uni=email_in.uni,
@@ -1156,6 +1171,7 @@ def ingest_email(email_in: EmailIn):
             confidence=confidence,
             status=status,
             suggested_reply=suggested_reply,
+            references_json=refs_json,
             received_at=received_at,
         )
         db.add(email_obj)
@@ -1306,6 +1322,11 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
                 elif from_addr_lower.endswith("@barnard.edu"):
                     extracted_uni = from_addr_lower.replace("@barnard.edu", "")
 
+            refs_json = json.dumps([
+                {"title": r.title, "url": r.url}
+                for r in result.references if r.url
+            ]) if not guardrail.is_personal else None
+
             email_obj = EmailORM(
                 student_name=from_name or None,
                 uni=extracted_uni,
@@ -1315,6 +1336,7 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
                 confidence=confidence,
                 status=status_enum,
                 suggested_reply=suggested_reply,
+                references_json=refs_json,
                 received_at=datetime.utcnow(),
             )
             db.add(email_obj)

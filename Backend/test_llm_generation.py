@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from email_advising import EmailAdvisor, load_knowledge_base, TfidfRetriever, load_reference_corpus, ClaudeGenerativeComposer
-from email_advising.llm import create_claude_llm
+from email_advising import EmailAdvisor, SentenceEmbedder, load_knowledge_base, TfidfRetriever, load_reference_corpus, LLMGenerativeComposer
+from email_advising.llm import create_openai_llm
 from email_advising.composers import TemplateEmailComposer
 
 print("Loading knowledge base and corpus...")
@@ -12,19 +12,23 @@ kb = load_knowledge_base()
 corpus = load_reference_corpus()
 retriever = TfidfRetriever(corpus)
 
-print("Setting up Claude generative composer...")
-llm = create_claude_llm()
-composer = ClaudeGenerativeComposer(
+print("Loading embedding model...")
+embedder = SentenceEmbedder()
+embedder._load()
+
+print("Setting up OpenAI generative composer...")
+llm = create_openai_llm()
+composer = LLMGenerativeComposer(
     llm=llm,
     style="professional",
     fallback_composer=TemplateEmailComposer(),
 )
 
-print("Creating advisor with Claude generative composer...")
-advisor = EmailAdvisor(kb, retriever=retriever, composer=composer)
+print("Creating advisor with OpenAI generative composer...")
+advisor = EmailAdvisor(kb, retriever=retriever, composer=composer, embedding_model=embedder)
 
 print("\n" + "="*70)
-print("Testing Claude-generated email response")
+print("Testing OpenAI-generated email response")
 print("="*70 + "\n")
 
 result = advisor.process_query(
