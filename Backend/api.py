@@ -760,8 +760,12 @@ Base.metadata.create_all(bind=engine)
 
 def _migrate_db():
     """Add columns introduced after initial schema creation."""
+    from sqlalchemy import inspect as sa_inspect
+    inspector = sa_inspect(engine)
+    if not inspector.has_table("emails"):
+        return  # create_all will handle fresh databases
+    existing = {col["name"] for col in inspector.get_columns("emails")}
     with engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(emails)"))}
         if "assigned_to" not in existing:
             conn.execute(text("ALTER TABLE emails ADD COLUMN assigned_to VARCHAR"))
             conn.commit()
