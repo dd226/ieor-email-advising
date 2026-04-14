@@ -154,9 +154,13 @@ def _is_safe_fetch_url(url: str) -> tuple[bool, str]:
 
 app = FastAPI(title="Email Advising System API")
 
+_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+if FRONTEND_URL and FRONTEND_URL not in _cors_origins:
+    _cors_origins.append(FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -172,11 +176,10 @@ retriever = TfidfRetriever(reference_corpus)
 
 # Initialize sentence embedding model for semantic confidence scoring.
 # Falls back gracefully if sentence-transformers is not installed.
+# Model is loaded lazily on first use to avoid blocking port binding at startup.
 embedder: Optional[SentenceEmbedder] = None
 try:
     embedder = SentenceEmbedder()
-    # Trigger model download / load eagerly so the first request isn't slow.
-    embedder._load()
 except Exception:
     pass
 
@@ -604,12 +607,18 @@ def fetch_url_content(req: FetchURLRequest):
 # Database setup (SQLite + SQLAlchemy)
 # =====================================================
 
-DATABASE_URL = "sqlite:///./emails.db"  # file in Backend directory
+# Read DATABASE_URL from environment; fall back to SQLite for local development.
+# Render/Neon provide postgres:// URIs; SQLAlchemy 2.x requires postgresql://.
+_raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'emails.db'}")
+if _raw_db_url.startswith("postgres://"):
+    _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
+DATABASE_URL = _raw_db_url
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},  # needed for SQLite + threads
-)
+_engine_kwargs: Dict[str, Any] = {}
+if DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 

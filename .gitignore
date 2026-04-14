@@ -40,3 +40,9 @@ next-env.d.ts
 # Logs
 # =========================
 *.log
+
+# =========================
+# OAuth credentials (never commit)
+# =========================
+Backend/data/gmail_token.json
+Backend/data/google_client_secrets.json
