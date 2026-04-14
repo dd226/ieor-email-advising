@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac } from "crypto";
 
-function expectedToken(): string {
+async function expectedToken(): Promise<string> {
   const password = process.env.ADVISOR_PASSWORD ?? "";
-  return createHmac("sha256", password).update("advisor-session").digest("hex");
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode("advisor-session")
+  );
+  return Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow the login page and auth API through
@@ -15,7 +29,8 @@ export function middleware(request: NextRequest) {
   }
 
   const session = request.cookies.get("advisor_session");
-  if (session?.value !== expectedToken()) {
+  const token = await expectedToken();
+  if (session?.value !== token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

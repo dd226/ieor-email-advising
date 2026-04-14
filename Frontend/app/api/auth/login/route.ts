@@ -1,5 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac } from "crypto";
+
+async function makeToken(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode("advisor-session")
+  );
+  return Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export async function POST(request: NextRequest) {
   const { password } = await request.json();
@@ -13,7 +31,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Incorrect password" }, { status: 401 });
   }
 
-  const token = createHmac("sha256", correct).update("advisor-session").digest("hex");
+  const token = await makeToken(correct);
 
   const response = NextResponse.json({ ok: true });
   response.cookies.set("advisor_session", token, {
