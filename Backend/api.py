@@ -197,7 +197,12 @@ except ValueError:
     # OPENAI_API_KEY not set; fall back to template-only
     pass
 
-advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=embedder)
+try:
+    advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=embedder)
+except Exception as e:
+    # Fall back to no embedder if initialization fails (e.g., bad OpenAI key)
+    print(f"Warning: Could not initialize advisor with embedder: {e}")
+    advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=None)
 personal_detector = PersonalEmailDetector()
 
 
@@ -1051,10 +1056,11 @@ def gmail_auth_url():
             "Expected at GOOGLE_OAUTH_CLIENT_FILE or data/google_client_secrets.json",
         )
 
+    backend_url = os.getenv("BACKEND_URL", "http://128.59.149.172:8000")
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri="http://127.0.0.1:8000/gmail/oauth2callback",
+        redirect_uri=f"{backend_url}/gmail/oauth2callback",
     )
 
     # NOTE: include_granted_scopes removed – it was causing the 400 error.
@@ -1224,7 +1230,7 @@ def ingest_email(email_in: EmailIn):
 
 
 @app.post("/emails/sync")
-def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
+def sync_emails(limit: int = 20):
     """
     Use Gmail API (OAuth) to pull unread emails, run them through the advisor,
     store them in SQLite, and optionally auto-send replies.
@@ -1413,7 +1419,7 @@ def gmail_fetch(limit: int = Query(default=20, ge=1, le=100, description="Max em
     Fetch new emails from Gmail. GET endpoint for easy triggering.
     This is an alias for POST /emails/sync for convenience.
     """
-    return sync_emails(limit=limit)
+    return sync_emails(limit=int(limit))
 
 
 # =====================================================

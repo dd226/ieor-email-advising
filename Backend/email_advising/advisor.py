@@ -110,6 +110,9 @@ class EmailAdvisor:
         Segments are split on sentence boundaries and paragraph breaks so that
         greetings and sign-offs do not dilute the actual question.
         """
+        if not self.embedding_model:
+            return []
+
         segments = [s.strip() for s in re.split(r"[.!?]+|\n\n+", query) if s.strip()]
         if not segments:
             segments = [query]
