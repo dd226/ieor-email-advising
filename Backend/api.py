@@ -154,7 +154,7 @@ def _is_safe_fetch_url(url: str) -> tuple[bool, str]:
 
 app = FastAPI(title="Email Advising System API")
 
-_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://128.59.149.172:3000"]
 if FRONTEND_URL and FRONTEND_URL not in _cors_origins:
     _cors_origins.append(FRONTEND_URL)
 
