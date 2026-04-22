@@ -9,8 +9,9 @@ Columbia IEOR email advising system built with **FastAPI** (backend) + **Next.js
 - **Frontend:** Next.js 16 with TypeScript + Tailwind
 - **LLM:** OpenAI GPT-4o (via `gpt-4o` model in `Backend/email_advising/llm.py`)
 - **Embeddings:** sentence-transformers (`multi-qa-MiniLM-L6-cos-v1`)
-- **Auth:** Client-side password gate (no middleware)
+- **Auth:** Client-side password gate (`/api/auth/login` Next.js route)
 - **Gmail:** OAuth 2.0 integration via Google API
+- **Reverse Proxy:** nginx (SSL termination, routing)
 
 ### Directory Structure
 ```
@@ -25,150 +26,159 @@ Columbia IEOR email advising system built with **FastAPI** (backend) + **Next.js
 │   │   ├── knowledge_base.json (FAQ articles)
 │   │   ├── google_client_secrets.json (OAuth credentials)
 │   │   └── gmail_token.json (stored OAuth tokens)
-│   ├── .env (config: OpenAI key, URLs)
+│   ├── .env (OpenAI key, FRONTEND_URL, BACKEND_URL)
 │   └── venv/
 ├── Frontend/
 │   ├── components/ (tabs, tables, UI)
+│   ├── app/api/auth/login/route.ts (password check — server-side Next.js route)
 │   ├── lib/constants.ts (BACKEND_URL, ADVISORS list)
 │   ├── .env.local (NEXT_PUBLIC_BACKEND_URL, ADVISOR_PASSWORD)
 │   └── package.json
 └── README.md
 ```
 
-### Ports & Access
-- **Backend:** Port 8000 (`http://128.59.149.172:8000`)
-- **Frontend:** Port 3000 (`http://128.59.149.172:3000` or `http://128.59.149.172.nip.io:3000`)
-- **Frontend password:** `IEOREMAILADVISOR2026` (set in `Frontend/.env.local`)
+---
+
+## Production Architecture (as of 2026-04-22)
+
+```
+Browser → https://advising.ieor.columbia.edu (port 443)
+    nginx (SSL termination with Let's Encrypt)
+        /backend/* → strips prefix → FastAPI on localhost:8000 (HTTP)
+        /*          → Next.js on 127.0.0.1:3000 (HTTP)
+```
+
+- **nginx** is the only public entry point — ports 3000 and 8000 are blocked externally
+- **SSL cert:** Let's Encrypt at `/etc/letsencrypt/live/advising.ieor.columbia.edu/` (expires 2026-07-21, auto-renews)
+- **Firewall (UFW):** ports 22/tcp, 80/tcp, 443/tcp open only
+
+### Why This Architecture
+- Columbia's campus network firewall blocks non-standard ports (3000, 8000) from the internet
+- Next.js dev server doesn't support native SSL — nginx handles it
+- Backend and frontend listen on localhost only — only reachable through nginx
+- Port 80 stays open for Let's Encrypt auto-renewal (HTTP-01 challenge)
 
 ---
 
-## Current Status (2026-04-20)
+## Current Status (2026-04-22)
 
 ### What Works ✅
-- Email syncing from Gmail (OAuth 2.0)
-- Email ingestion and storage
-- Personal/sensitive email detection
-- Template-based email responses (fallback mode)
+- Full HTTPS at `https://advising.ieor.columbia.edu` (padlock, valid cert)
+- Password login
+- Email syncing from Gmail (OAuth 2.0 connected)
+- Email ingestion, deduplication, personal email detection
+- Template-based email responses (fallback mode — no LLM key)
 - Manual review and bulk actions
 - Email assignment to advisors
-- Auto-send for high-confidence replies
+- All services managed by systemd (auto-restart, start on boot)
 
 ### What Needs Setup ⚠️
-- **OpenAI API Key:** Currently set to placeholder `your-openai-api-key-here`
-  - Without it: system uses template responses (no LLM)
-  - With it: system generates smart, context-aware replies
-
-### Running the App
-
-**Terminal 1 - Backend:**
-```bash
-cd /opt/ieor-email-advising/Backend
-source venv/bin/activate
-uvicorn api:app --host 0.0.0.0 --port 8000
-```
-
-**Terminal 2 - Frontend:**
-```bash
-cd /opt/ieor-email-advising/Frontend
-npm run dev -- --hostname 0.0.0.0 --port 3000
-```
-
-**Access:** `http://128.59.149.172:3000` or `http://128.59.149.172.nip.io:3000`
+- **OpenAI API Key:** `Backend/.env` still has placeholder `your-openai-api-key-here`
+  - System works in template mode without it
+  - Paste valid key from https://platform.openai.com/api-keys and restart backend
 
 ---
 
-## Recent Fixes (Session 2026-04-20)
+## Access
 
-### Issue 1: "Failed to fetch" on `/gmail/fetch` endpoint
-**Root cause:** Query parameter type error in `sync_emails()` function
-- **Error:** `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'Query'`
-- **Location:** `Backend/api.py:1252` when calling Gmail API
-- **Fix:** Changed `sync_emails(limit: int = Query(...))` to `limit: int = 20` and cast `int(limit)` in endpoint
-- **Why:** FastAPI only parses Query params at endpoint layer; internal function calls get the raw object
+| | |
+|---|---|
+| **URL** | `https://advising.ieor.columbia.edu` |
+| **Password** | `IEOREMAILADVISOR2026` |
+| **Gmail OAuth callback** | `https://advising.ieor.columbia.edu/backend/gmail/oauth2callback` |
 
-### Issue 2: AttributeError when embedding model is None
-**Root cause:** Advisor tries to use embeddings when OpenAI key is invalid
-- **Error:** `AttributeError: 'NoneType' object has no attribute 'encode'`
-- **Location:** `Backend/email_advising/advisor.py:117` in `rank_articles()`
-- **Fix:** Added null check: `if not self.embedding_model: return []`
-- **Why:** Invalid OpenAI key causes advisor init without embedder, but code didn't handle it gracefully
-
-### Issue 3: CORS rejection from browser
-**Root cause:** Frontend origin mismatch
-- **Error:** "Disallowed CORS origin" from backend
-- **Problem:** Frontend was using `http://128.59.149.172.nip.io:3000` but backend only allowed `http://128.59.149.172:3000`
-- **Fix 1:** Updated `Backend/.env` `FRONTEND_URL` to match nip.io domain
-- **Fix 2:** Added `http://128.59.149.172:3000` directly to CORS allow-list for users accessing via IP
-
-### Commits
-- `9a90c43` - Fix Gmail fetch endpoint errors and CORS configuration
-- `7fd8e3b` - Allow CORS from both IP address and nip.io domain
+**Note:** The LastPass browser extension causes a React hydration warning on the login page — this is cosmetic and the app works fine. Disable LastPass on this domain or use incognito to suppress it.
 
 ---
 
-## System Architecture
+## Managing Services
 
-### Email Processing Flow
-1. **Sync:** User clicks "Sync Emails" → calls `/gmail/fetch` → pulls unread emails from Gmail
-2. **Ingest:** For each email:
-   - Extract subject, body, sender info
-   - Check for duplicates (subject + body)
-   - Mark as personal if sensitive content detected
-3. **Classify:** Run through advisor:
-   - If personal → mark as `personal`, use sensitive response template
-   - If not personal:
-     - Rank knowledge base articles via semantic embedding
-     - Generate reply with LLM (if key valid) or template (if not)
-     - Calculate confidence score
-     - If confidence ≥ threshold → auto-send; else → manual review
-4. **Store:** Save to SQLite with status (`auto`, `review`, `sent`, `personal`)
-5. **Send:** Auto-send high-confidence replies, or user manually approves in UI
+All services run as systemd units — **do not start manually**.
 
-### Fallback Behavior (No LLM)
-When OpenAI key is invalid or missing:
-- `rank_articles()` returns empty list (no semantic matches)
-- `process_query()` triggers fallback response
-- System uses hardcoded templates for replies
-- **App remains fully functional** — just less intelligent
+```bash
+# Status
+sudo systemctl status nginx
+sudo systemctl status ieor-backend
+sudo systemctl status ieor-frontend
+
+# Restart (e.g. after config change)
+sudo systemctl restart ieor-backend
+sudo systemctl restart ieor-frontend
+sudo systemctl reload nginx   # for nginx config changes
+
+# Logs
+sudo journalctl -u ieor-backend -n 50 --no-pager
+sudo journalctl -u ieor-frontend -n 50 --no-pager
+```
+
+### Service Definitions
+- `/etc/systemd/system/ieor-backend.service` — FastAPI on localhost:8000 (no SSL, nginx handles it)
+- `/etc/systemd/system/ieor-frontend.service` — Next.js dev on 127.0.0.1:3000 (uses full nvm node path)
+- `/etc/nginx/sites-available/ieor-advising` — nginx config (symlinked to sites-enabled)
 
 ---
 
 ## Configuration
 
-### Backend Environment (`Backend/.env`)
+### Backend/.env (current values)
 ```
-OPENAI_API_KEY=your-openai-api-key-here          # ⚠️ MUST BE VALID
-FRONTEND_URL=http://128.59.149.172.nip.io:3000  # Used for CORS
-BACKEND_URL=http://128.59.149.172.nip.io:8000   # Not currently used by backend
-```
-
-### Frontend Environment (`Frontend/.env.local`)
-```
-NEXT_PUBLIC_BACKEND_URL=http://128.59.149.172.nip.io:8000  # API endpoint
-ADVISOR_PASSWORD=IEOREMAILADVISOR2026                       # UI access password
+OPENAI_API_KEY=your-openai-api-key-here   # ⚠️ still placeholder
+FRONTEND_URL=https://advising.ieor.columbia.edu
+BACKEND_URL=https://advising.ieor.columbia.edu/backend
 ```
 
-### Gmail Credentials
-- **OAuth setup:** `Backend/data/google_client_secrets.json` (Google Cloud Console)
-- **Stored tokens:** `Backend/data/gmail_token.json` (auto-created on first auth)
+### Frontend/.env.local (current values)
+```
+NEXT_PUBLIC_BACKEND_URL=https://advising.ieor.columbia.edu/backend
+ADVISOR_PASSWORD=IEOREMAILADVISOR2026
+```
+
+### CORS (Backend/api.py ~line 157)
+```python
+_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://128.59.146.240:3000", "https://advising.ieor.columbia.edu"]
+```
+The `FRONTEND_URL` env var is appended dynamically, so `https://advising.ieor.columbia.edu` appears twice — harmless.
+
+### Gmail OAuth (Google Cloud Console)
+- **App mode:** Testing (NOT production — no Google verification needed for single user)
+- **Test user:** `dd226@columbia.edu` must be added to test users list
+- **Registered redirect URI:** `https://advising.ieor.columbia.edu/backend/gmail/oauth2callback`
+- **Client ID:** `1007215112214-iedfi53ogsmtr76tsempj38ssh58mqrl`
 
 ---
 
-## Getting a Valid OpenAI API Key
+## nginx Config Summary
 
-1. Go to https://platform.openai.com/api-keys
-2. Create a new API key or copy existing one
-3. **Important:** Avoid pasting extra spaces — copy the full key cleanly
-4. Paste into `Backend/.env` as:
-   ```
-   OPENAI_API_KEY=sk-proj-xxxx...
-   ```
-5. Restart backend: `uvicorn api:app --host 0.0.0.0 --port 8000`
+```nginx
+# Port 80: redirect to HTTPS, allow Let's Encrypt renewal
+server {
+    listen 80;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
 
-Once valid, the app will:
-- Use semantic matching on knowledge base
-- Generate smart, context-aware LLM responses
-- Provide confidence scores for auto-send decisions
+# Port 443: SSL termination, proxy routing
+server {
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/advising.ieor.columbia.edu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/advising.ieor.columbia.edu/privkey.pem;
+
+    location /backend/ { proxy_pass http://localhost:8000/; }  # FastAPI
+    location / { proxy_pass http://localhost:3000; }           # Next.js
+}
+```
+
+**Critical:** `/backend/` prefix routes to FastAPI. `/api/` is reserved for Next.js internal routes (e.g. `/api/auth/login`). Do not use `/api/` as the FastAPI prefix.
+
+---
+
+## Email Processing Flow
+
+1. **Sync:** "Sync Emails" → `/backend/gmail/fetch` → pulls unread from Gmail
+2. **Ingest:** extract fields, check duplicates, detect personal emails
+3. **Classify:** semantic embedding match → LLM reply (if key valid) or template fallback → confidence score
+4. **Store:** SQLite with status (`auto`, `review`, `sent`, `personal`)
+5. **Send:** auto-send high-confidence, or manual approval in UI
 
 ---
 
@@ -176,27 +186,62 @@ Once valid, the app will:
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| "Failed to fetch" on sync | Query param type error or CORS | Backend endpoint fixed; CORS allows both IP and nip.io |
-| "Could not load dashboard data" | Backend not running or unreachable | Start backend on port 8000 |
-| No LLM responses, only templates | OpenAI key invalid | Paste valid key in `Backend/.env`, restart backend |
-| Gmail sync fails | OAuth tokens expired or not initialized | Re-auth via Settings tab → Connect Gmail |
-| CORS rejected by browser | Origin mismatch | Use `http://128.59.149.172.nip.io:3000` or direct IP both work now |
+| Dashboard data fails to load | Old process on port 8000 without SSL | `sudo fuser -k 8000/tcp` then `sudo systemctl restart ieor-backend` |
+| 502 Bad Gateway | Frontend or backend service down | `sudo systemctl restart ieor-frontend` or `ieor-backend` |
+| Gmail OAuth "redirect URI not registered" | URI changed, GCP not updated | Update in Google Cloud Console → OAuth 2.0 Client ID |
+| "App not verified" on Gmail OAuth | GCP app in Testing mode | Click Advanced → proceed anyway; or add test user in GCP console |
+| No LLM responses, only templates | OpenAI key placeholder | Paste valid key in `Backend/.env`, `sudo systemctl restart ieor-backend` |
+| Hydration warning on login | LastPass extension injecting HTML | Disable LastPass on this domain or use incognito — app works fine |
+| Cert renewal fails | Port 80 blocked | `sudo ufw allow 80/tcp` — must stay open always |
+| Frontend not picking up new env var | NEXT_PUBLIC vars baked in at compile | `sudo systemctl restart ieor-frontend` and wait ~30s for recompile |
 
 ---
 
-## Notes for Future Development
+## Troubleshooting nginx Issues
 
-- **No Alembic migrations:** Schema changes work directly on SQLite
-- **Async:** FastAPI is async-capable but currently uses sync handlers
-- **Embeddings:** Sentence-transformers uses CPU; consider GPU if scaling
-- **Trash feature:** Exists on `main` and `feature/trash-tab` branches; soft-delete/restore implemented
-- **Testing:** No automated tests; manual testing required
-- **Grafana:** Was disabled (`sudo systemctl stop/disable grafana-server`) to free port 3000
+```bash
+# Test config syntax before reloading
+sudo nginx -t
+
+# Check what's blocking a port
+sudo fuser -k 8000/tcp
+sudo fuser -k 3000/tcp
+
+# Firewall status
+sudo ufw status
+```
+
+---
+
+## Session History
+
+### Session 1 (2026-04-20) — Initial fixes
+- Fixed `/gmail/fetch` Query param type error (`api.py:1252`)
+- Fixed embedding model null check (`advisor.py:117`)
+- Fixed CORS for both IP and nip.io domain
+
+### Session 2 (2026-04-22) — Production HTTPS setup
+- Migrated to static IP `128.59.146.240` / hostname `advising.ieor.columbia.edu`
+- Installed Let's Encrypt certificate via certbot
+- Installed nginx as SSL reverse proxy (port 443)
+- Moved backend and frontend to systemd services
+- Blocked ports 3000/8000 externally via UFW
+- Updated Gmail OAuth redirect URI to `/backend/gmail/oauth2callback`
+- Fixed `/api/` vs `/backend/` prefix conflict with Next.js routes
+- Gmail OAuth working; app fully accessible over HTTPS
 
 ---
 
 ## Git Branches
-- `main` — Trash feature (working)
+- `main` — Trash feature (soft-delete/restore)
 - `feature/trash-tab` — Same as main
-- `before-trash` — Current working branch (endpoint fixes applied)
+- `before-trash` — Current running branch (all fixes applied here)
 - Remote: `myfork` = https://github.com/dd226/ieor-email-advising
+
+---
+
+## Future Work
+- Add valid OpenAI API key to enable LLM responses
+- Consider upgrading Python 3.10 → 3.11+ (3.10 EOL: 2026-10-04)
+- Consider `npm run build && npm run start` (production mode) instead of `dev` for better performance
+- Merge `before-trash` fixes into `main`
