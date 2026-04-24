@@ -253,6 +253,9 @@ export default function EmailsTab() {
   // Advisor toggle filter (single-select; null = show all)
   const [advisorFilter, setAdvisorFilter] = useState<string | null>(null);
 
+  // Student filter: "all" | "students" (has UNI) | "non-students" (no UNI)
+  const [studentFilter, setStudentFilter] = useState<"all" | "students" | "non-students">("all");
+
   // Preview toggle
   const [showPreview, setShowPreview] = useState(false);
 
@@ -875,6 +878,13 @@ export default function EmailsTab() {
       });
     }
 
+    // Student filter
+    if (studentFilter === "students") {
+      filtered = filtered.filter((e) => !!e.uni && e.uni.trim() !== "");
+    } else if (studentFilter === "non-students") {
+      filtered = filtered.filter((e) => !e.uni || e.uni.trim() === "");
+    }
+
     return filtered;
   }
 
@@ -1054,7 +1064,7 @@ export default function EmailsTab() {
           </div>
         </div>
 
-        {/* Quick Filters + Preview toggle */}
+        {/* Quick Filters + Student toggle + Preview toggle */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {filters.map((filter) => (
             <button
@@ -1070,6 +1080,39 @@ export default function EmailsTab() {
               {filter.label}
             </button>
           ))}
+
+          {/* Student / Non-Student segmented toggle */}
+          <div className="border-l border-border pl-2 ml-1 flex items-center">
+            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium">
+              {(
+                [
+                  { id: "all", label: "All Senders" },
+                  { id: "students", label: "Students" },
+                  { id: "non-students", label: "Non-Students" },
+                ] as const
+              ).map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => setStudentFilter(id)}
+                  className={`px-3 py-1.5 transition-all ${
+                    studentFilter === id
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground hover:bg-muted/70"
+                  }`}
+                  title={
+                    id === "all"
+                      ? "Show all emails"
+                      : id === "students"
+                      ? "Show only emails from students (have a UNI)"
+                      : "Show only emails from non-students (no UNI)"
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="border-l border-border pl-2 ml-1">
             <button
               onClick={() => setShowPreview((p) => !p)}

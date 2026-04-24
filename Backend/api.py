@@ -920,6 +920,13 @@ _QUOTED_PATTERNS = re.compile(
     re.VERBOSE | re.IGNORECASE | re.MULTILINE,
 )
 
+# Matches "On ... wrote:" even when Gmail wraps it across two lines.
+# Uses [^\n] instead of . so we don't accidentally cross more than one newline.
+_ATTRIBUTION_MULTILINE_RE = re.compile(
+    r'^\s*On\s+[^\n]{0,300}\n?[^\n]{0,200}wrote:\s*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def parse_email_chain(body: str) -> tuple[str, str]:
     """Split an email body into (latest_message, prior_chain).
@@ -937,6 +944,15 @@ def parse_email_chain(body: str) -> tuple[str, str]:
         if _QUOTED_PATTERNS.match(line):
             cutoff = i
             break
+
+    # Secondary pass: catch "On ... wrote:" attribution headers that Gmail
+    # wraps across two lines (the single-line regex above misses these).
+    m = _ATTRIBUTION_MULTILINE_RE.search(body)
+    if m:
+        attr_line = body[: m.start()].count("\n")
+        if attr_line < cutoff:
+            cutoff = attr_line
+
     latest = "\n".join(lines[:cutoff]).strip()
     prior = "\n".join(lines[cutoff:]).strip()
     return latest, prior
