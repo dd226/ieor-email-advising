@@ -60,22 +60,21 @@ Browser → https://advising.ieor.columbia.edu (port 443)
 
 ---
 
-## Current Status (2026-04-22)
+## Current Status (2026-04-23)
 
 ### What Works ✅
 - Full HTTPS at `https://advising.ieor.columbia.edu` (padlock, valid cert)
-- Password login
+- Password login (to be replaced with Google OAuth — plan ready, not yet implemented)
 - Email syncing from Gmail (OAuth 2.0 connected)
 - Email ingestion, deduplication, personal email detection
-- Template-based email responses (fallback mode — no LLM key)
+- LLM-generated email responses via GPT-4o (confirmed 81% confidence score)
+- Template fallback for unmatched emails
 - Manual review and bulk actions
 - Email assignment to advisors
 - All services managed by systemd (auto-restart, start on boot)
 
 ### What Needs Setup ⚠️
-- **OpenAI API Key:** `Backend/.env` still has placeholder `your-openai-api-key-here`
-  - System works in template mode without it
-  - Paste valid key from https://platform.openai.com/api-keys and restart backend
+- **Google OAuth Login:** Plan is ready (see Future Work). Needs new GCP Web OAuth Client ID before implementing.
 
 ---
 
@@ -122,7 +121,7 @@ sudo journalctl -u ieor-frontend -n 50 --no-pager
 
 ### Backend/.env (current values)
 ```
-OPENAI_API_KEY=your-openai-api-key-here   # ⚠️ still placeholder
+OPENAI_API_KEY=<active key set 2026-04-23>
 FRONTEND_URL=https://advising.ieor.columbia.edu
 BACKEND_URL=https://advising.ieor.columbia.edu/backend
 ```
@@ -230,6 +229,12 @@ sudo ufw status
 - Fixed `/api/` vs `/backend/` prefix conflict with Next.js routes
 - Gmail OAuth working; app fully accessible over HTTPS
 
+### Session 3 (2026-04-23) — OpenAI key + planning
+- Activated OpenAI API key in `Backend/.env` — LLM (GPT-4o) now live, confirmed 81% confidence score
+- Investigated sending emails from `info@ieor.columbia.edu` (Grouper group) — unresolved, needs Columbia IT SMTP relay or service account
+- Discussed dev VM cloning strategy (hot snapshot from Windows Server, own SSL cert needed)
+- **Planned** Google OAuth login (Auth.js v5) — plan at `/home/dd226/.claude/plans/the-website-cuurent-has-tranquil-puddle.md` — NOT YET IMPLEMENTED
+
 ---
 
 ## Git Branches
@@ -240,8 +245,33 @@ sudo ufw status
 
 ---
 
+## Backup & Recovery Strategy
+
+### Current State
+No backup/recovery plan yet. Recommended approach for warm VM failover:
+
+**Known Issue:** Gmail sync has a backup/failover risk
+- Sync relies on Gmail's `is:unread` flag + naive subject+body duplicate check
+- Database does NOT store Gmail message IDs
+- On failover to stale backup: old emails may be reprocessed, causing duplicate auto-sends
+
+**Solutions (prioritized):**
+1. **Best:** Store Gmail message IDs in database (`EmailORM.gmail_message_id`). Use as authoritative duplicate key. ~10 min code change to `api.py`.
+2. **Workaround:** Before failover, sync once on primary to mark all emails read in Gmail.
+3. **Mitigate:** Keep backup snapshots daily to minimize stale window.
+
+**Recommended backup strategy:**
+- Daily SQLite database backups to offsite storage
+- Automated restore script (reinstall stack, restore DB + certs + configs)
+- Warm standby VM image on another physical host (optional, for cold failover)
+
+---
+
 ## Future Work
-- Add valid OpenAI API key to enable LLM responses
+- **BLOCKING for production backup:** Implement Gmail message ID tracking (see Backup & Recovery section)
+- **Google OAuth Login (plan ready):** Replace password gate with per-user Google OAuth using Auth.js v5. Plan at `/home/dd226/.claude/plans/the-website-cuurent-has-tranquil-puddle.md`. Pre-requisite: create new Web OAuth Client ID in GCP (separate from Gmail client).
+- **Dev VM:** Clone production VM via Windows Server snapshot. Needs own hostname + SSL cert. Update .env files, nginx config, GCP redirect URIs.
+- **Email sending from `info@ieor.columbia.edu`:** Grouper group, no SMTP credentials. Contact Columbia IT for SMTP relay or service account. Backend change: SMTP for sending only, keep Gmail OAuth for receiving.
 - Consider upgrading Python 3.10 → 3.11+ (3.10 EOL: 2026-10-04)
 - Consider `npm run build && npm run start` (production mode) instead of `dev` for better performance
 - Merge `before-trash` fixes into `main`
