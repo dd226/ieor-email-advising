@@ -140,8 +140,14 @@ export default function AutoSentTable({
 
   if (emails.length === 0) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No approved emails.
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+          <svg className="h-8 w-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-foreground">No emails sent yet</p>
+        <p className="text-sm text-muted-foreground mt-1">Approved replies will appear here.</p>
       </div>
     );
   }
