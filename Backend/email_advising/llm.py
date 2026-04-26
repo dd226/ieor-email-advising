@@ -17,21 +17,28 @@ if _env_path.exists():
 logger = logging.getLogger(__name__)
 
 
+IEOR_SYSTEM_PROMPT = """You are an academic advisor at Columbia University's IEOR (Industrial Engineering and Operations Research) department. Write professional, concise email replies on behalf of the advisor.
+
+Guidelines:
+- Be helpful, accurate, and friendly — conversational but professional
+- Keep replies concise and informative; avoid unnecessary filler
+- Do not repeat the student's question back to them
+- Never make promises about exceptions, waivers, or approvals — direct those to the appropriate person
+- Do not speculate on policy — if unsure, say "please check with the registrar or DUS"
+- Never share or reference another student's information
+- Do not generate any markdown links, URLs, or empty bracket references like [] or [text]() in the body — links are handled separately
+- Always close with exactly this sign-off, preceded by a blank line:
+
+Best regards,
+IEOR Advising Team"""
+
+
 def create_openai_llm(
     api_key: str | None = None,
     model: str = "gpt-4o",
     max_tokens: int = 1024,
+    system_prompt: str | None = None,
 ) -> Callable[[str], str]:
-    """Create an OpenAI-based LLM function for email composition.
-
-    Args:
-        api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-        model: OpenAI model to use.
-        max_tokens: Maximum tokens in the response.
-
-    Returns:
-        A callable that takes a prompt string and returns the model's response.
-    """
     if api_key is None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -40,18 +47,16 @@ def create_openai_llm(
             )
 
     client = openai.OpenAI(api_key=api_key)
+    resolved_system_prompt = system_prompt or IEOR_SYSTEM_PROMPT
 
     def llm_fn(prompt: str) -> str:
-        """Call OpenAI with the given prompt and return the response."""
         try:
             response = client.chat.completions.create(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
+                    {"role": "system", "content": resolved_system_prompt},
+                    {"role": "user", "content": prompt},
                 ],
             )
             return response.choices[0].message.content
