@@ -184,8 +184,14 @@ export default function ManualReviewTable({
 
   if (emails.length === 0) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No emails needing review.
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="h-16 w-16 rounded-full bg-amber-50 flex items-center justify-center mb-4">
+          <svg className="h-8 w-8 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-foreground">All caught up!</p>
+        <p className="text-sm text-muted-foreground mt-1">No emails are waiting for review.</p>
       </div>
     );
   }

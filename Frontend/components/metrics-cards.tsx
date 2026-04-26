@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useCountUp } from "@/hooks/use-count-up";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -376,6 +377,12 @@ export default function MetricsCards() {
   })();
 
 
+  const animatedToday = useCountUp(metrics?.emailsToday ?? 0);
+  const animatedReview = useCountUp(metrics?.manualReview ?? 0);
+  const animatedPending = useCountUp(pendingSendEmails.length);
+  const animatedSent = useCountUp(sentEmails.length);
+  const animatedPersonal = useCountUp(personalEmails.length);
+
   if (loading && !metrics && !error) {
     return (
       <div className="space-y-4">
@@ -426,28 +433,28 @@ export default function MetricsCards() {
       {/* Top Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {/* Emails Today */}
-        <Card className="border border-t-4 border-t-blue-500 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border border-t-4 border-t-primary shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Emails Today
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600 -mt-1">{emailsToday}</div>
+            <div className="text-3xl font-bold text-primary -mt-1">{animatedToday}</div>
             <p className="mt-3 text-xs text-muted-foreground">Number of emails received today</p>
             <p className="text-xs text-muted-foreground mt-1">Last received: {lastReceivedLabel}</p>
           </CardContent>
         </Card>
 
         {/* Needs Review */}
-        <Card className="border border-t-4 border-t-amber-500 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border border-t-4 border-t-amber-500 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Needs Review
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600 -mt-1">{manualReview}</div>
+            <div className="text-3xl font-bold text-amber-600 -mt-1">{animatedReview}</div>
             <p className="mt-3 text-xs text-muted-foreground">Number of emails that need review</p>
             {manualReview > 0 && (
               <p className="text-xs text-muted-foreground mt-1">Oldest waiting: {oldestPendingLabel}</p>
@@ -456,14 +463,14 @@ export default function MetricsCards() {
         </Card>
 
         {/* Pending Send */}
-        <Card className="border border-t-4 border-t-violet-500 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border border-t-4 border-t-violet-500 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Pending Send
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600 -mt-1">{pendingSend}</div>
+            <div className="text-3xl font-bold text-violet-600 -mt-1">{animatedPending}</div>
             <p className="mt-3 text-xs text-muted-foreground">Number of emails waiting to be sent</p>
             {pendingSendEmails.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">Oldest waiting: {oldestPendingSendLabel}</p>
@@ -472,14 +479,14 @@ export default function MetricsCards() {
         </Card>
 
         {/* Sent */}
-        <Card className="border border-t-4 border-t-emerald-500 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border border-t-4 border-t-emerald-500 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Sent
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600 -mt-1">{sentCount}</div>
+            <div className="text-3xl font-bold text-emerald-600 -mt-1">{animatedSent}</div>
             <p className="mt-3 text-xs text-muted-foreground">Number of replies delivered</p>
             {sentEmails.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">Avg response time: {avgSentResponseLabel}</p>
@@ -488,14 +495,14 @@ export default function MetricsCards() {
         </Card>
 
         {/* Personal */}
-        <Card className="border border-t-4 border-t-rose-500 bg-red-50 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border border-t-4 border-t-rose-500 bg-red-50 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-red-600">
               Personal Emails
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-red-600 -mt-1">{personalEmails.length}</div>
+            <div className="text-3xl font-bold text-red-600 -mt-1">{animatedPersonal}</div>
             <p className="mt-3 text-xs text-red-500">Require advisor attention</p>
             {personalEmails.length > 0 && (
               <p className="text-xs text-red-500 mt-1">Oldest waiting: {oldestPersonalLabel}</p>
@@ -516,7 +523,7 @@ export default function MetricsCards() {
               variant={chartView === "daily" ? "default" : "outline"}
               onClick={() => setChartView("daily")}
               className={
-                chartView === "daily" ? "bg-blue-600 hover:bg-blue-700" : ""
+                chartView === "daily" ? "bg-primary hover:bg-primary/90" : ""
               }
             >
               Daily
@@ -526,7 +533,7 @@ export default function MetricsCards() {
               variant={chartView === "weekly" ? "default" : "outline"}
               onClick={() => setChartView("weekly")}
               className={
-                chartView === "weekly" ? "bg-blue-600 hover:bg-blue-700" : ""
+                chartView === "weekly" ? "bg-primary hover:bg-primary/90" : ""
               }
             >
               Weekly
@@ -536,7 +543,7 @@ export default function MetricsCards() {
               variant={chartView === "monthly" ? "default" : "outline"}
               onClick={() => setChartView("monthly")}
               className={
-                chartView === "monthly" ? "bg-blue-600 hover:bg-blue-700" : ""
+                chartView === "monthly" ? "bg-primary hover:bg-primary/90" : ""
               }
             >
               Monthly
@@ -546,7 +553,7 @@ export default function MetricsCards() {
               variant={chartView === "yearly" ? "default" : "outline"}
               onClick={() => setChartView("yearly")}
               className={
-                chartView === "yearly" ? "bg-blue-600 hover:bg-blue-700" : ""
+                chartView === "yearly" ? "bg-primary hover:bg-primary/90" : ""
               }
             >
               Yearly
@@ -570,9 +577,9 @@ export default function MetricsCards() {
               <Line
                 type="monotone"
                 dataKey="count"
-                stroke="#2563eb"
+                stroke="#003087"
                 strokeWidth={2}
-                dot={{ fill: "#2563eb", r: 4 }}
+                dot={{ fill: "#003087", r: 4 }}
               />
             </LineChart>
           </ResponsiveContainer>

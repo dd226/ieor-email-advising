@@ -44,7 +44,7 @@ export default function Page() {
         <main className="flex-1 min-h-0 overflow-hidden flex flex-col px-8 py-8">
           {/* Dashboard Tab */}
           {activeTab === "dashboard" && (
-            <div className="space-y-8 animate-fade-in overflow-y-auto flex-1">
+            <div key="dashboard" className="space-y-8 animate-fade-in overflow-y-auto flex-1">
               <div>
                 <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
                 <p className="mt-2 text-muted-foreground">
@@ -59,16 +59,16 @@ export default function Page() {
           )}
 
           {/* Emails Tab */}
-          {activeTab === "emails" && <div className="animate-fade-in flex-1 min-h-0 flex flex-col"><EmailsTab /></div>}
+          {activeTab === "emails" && <div key="emails" className="animate-fade-in flex-1 min-h-0 flex flex-col"><EmailsTab /></div>}
 
           {/* Analytics Tab */}
-          {activeTab === "analytics" && <div className="animate-fade-in overflow-y-auto flex-1"><AnalyticsTab /></div>}
+          {activeTab === "analytics" && <div key="analytics" className="animate-fade-in overflow-y-auto flex-1"><AnalyticsTab /></div>}
 
           {/* Settings Tab */}
-          {activeTab === "settings" && <div className="animate-fade-in overflow-y-auto flex-1"><SettingsTab /></div>}
+          {activeTab === "settings" && <div key="settings" className="animate-fade-in overflow-y-auto flex-1"><SettingsTab /></div>}
 
           {/* Senior Design Expo Tab */}
-          {activeTab === "expo" && <div className="animate-fade-in overflow-y-auto flex-1"><ExpoTab /></div>}
+          {activeTab === "expo" && <div key="expo" className="animate-fade-in overflow-y-auto flex-1"><ExpoTab /></div>}
         </main>
       </div>
     </div>

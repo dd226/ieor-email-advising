@@ -210,7 +210,9 @@ export default function EmailsTab() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [replyDraft, setReplyDraft] = useState<string>("");
   const [draftSaved, setDraftSaved] = useState<boolean>(false);
-  const [panelWidth, setPanelWidth] = useState(560);
+  const [panelWidth, setPanelWidth] = useState(() =>
+    typeof window !== "undefined" ? Math.round(window.innerWidth * 0.5) : 560
+  );
   const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const handleDragStart = useCallback((e: React.MouseEvent) => {
