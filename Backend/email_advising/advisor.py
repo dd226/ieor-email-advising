@@ -245,7 +245,7 @@ class EmailAdvisor:
             "Hello {student_name},\n\n"
             "Thanks for contacting the advising office. Your question has been routed to an advisor "
             "for a personal response. We will review the details and get back to you within one business day."
-            "\n\nBest,\nAcademic Advising Team"
+            "\n\nBest regards,\nIEOR Advising Team"
         ).format_map(context)
         if not reasons:
             reasons.append("Unable to determine an appropriate template.")

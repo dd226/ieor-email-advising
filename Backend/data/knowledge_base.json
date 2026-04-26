@@ -159,12 +159,12 @@
       "I want to meet to discuss switching majors.",
       "What are the steps to change my major at Columbia Engineering?"
     ],
-    "response_template": "Hello {student_name},\n\nThanks for reaching out! To change or declare a major, you will first need to obtain permission by an advisor in your new department. Afterward, you will need to complete the Major/Minor Declaration/Change form, available here: {major_minor_declaration_form}. The form must be submitted to Kelly Katsigiris, the Academic & Student Affairs for IEOR undergraduate students. She will read and sign the form, and then she will send it to your CSA advisor. Before you submit the form, we highly recommend you review the program requirements in the Columbia Engineering Bulletin to ensure it’s a good fit, and check to see if any of the courses you’ve taken count towards the new major. We would be happy to meet to discuss this decision and help you create an updated academic plan. Let us know what you decide! Best regards, Academic Advising Team",
+    "response_template": "Hello {student_name},\n\nThanks for reaching out! To change or declare a major, you will first need to obtain permission by an advisor in your new department. Afterward, you will need to complete the Major/Minor Declaration/Change form, available here: https://www.cc-seas.columbia.edu/sites/dsa/files/forms/CSA%20Forms%20--%20SEAS%20major%20declaration%20form%20--%20updated%20November%202025.pdf. The form must be submitted to Kelly Katsigiris, the Academic & Student Affairs for IEOR undergraduate students. She will read and sign the form, and then she will send it to your CSA advisor. Before you submit the form, we highly recommend you review the program requirements in the Columbia Engineering Bulletin to ensure it’s a good fit, and check to see if any of the courses you’ve taken count towards the new major. We would be happy to meet to discuss this decision and help you create an updated academic plan. Let us know what you decide! Best regards, Academic Advising Team",
     "follow_up_questions": [
       "Have you checked if the classes you’ve taken count towards your new major?"
     ],
     "metadata": {
-      "major_minor_declaration_form": "https://www.cc-seas.columbia.edu/sites/dsa/files/forms/SEAS%20major%20declaration_0.pdf"
+      "major_minor_declaration_form": "https://www.cc-seas.columbia.edu/sites/dsa/files/forms/CSA%20Forms%20--%20SEAS%20major%20declaration%20form%20--%20updated%20November%202025.pdf"
     }
   },
   {
@@ -199,12 +199,12 @@
       "I completed my minor, what paperwork do I need to file?",
       "Can I switch from one minor to another?"
     ],
-    "response_template": "Hello {student_name},\n\nThanks for reaching out! To add or drop a minor, you will need to complete the Major/Minor Declaration/Change form, available here: {major_minor_declaration_form}. The form must be submitted to your academic advisor. We would be happy to meet to discuss this decision and help you create an updated academic plan. Let us know what you decide! Best regards, Academic Advising Team",
+    "response_template": "Hello {student_name},\n\nThanks for reaching out! To add or drop a minor, you will need to complete the Major/Minor Declaration/Change form, available here: https://www.cc-seas.columbia.edu/sites/dsa/files/forms/CSA%20Forms%20--%20SEAS%20major%20declaration%20form%20--%20updated%20November%202025.pdf. The form must be submitted to your academic advisor. We would be happy to meet to discuss this decision and help you create an updated academic plan. Let us know what you decide! Best regards, Academic Advising Team",
     "follow_up_questions": [
       "Have you checked if the classes you’ve taken count towards this minor?"
     ],
     "metadata": {
-      "major_minor_declaration_form": "https://www.cc-seas.columbia.edu/sites/dsa/files/forms/SEAS%20major%20declaration_0.pdf"
+      "major_minor_declaration_form": "https://www.cc-seas.columbia.edu/sites/dsa/files/forms/CSA%20Forms%20--%20SEAS%20major%20declaration%20form%20--%20updated%20November%202025.pdf"
     }
   },
   {
@@ -238,7 +238,7 @@
       "I want to go over my major requirements with an advisor.",
       "Help me understand my program requirements."
     ],
-    "response_template": "Hello {student_name},\n\nThanks for reaching out! To find the latest information about the IEOR undergraduate curriculum, you can consult the IEOR Undergraduate curriculum page, available here: {undergraduate_curriculum_page}. Here, you will find information about the common IEOR core, as well as specific requirements for each IEOR major and a link to eligible IEOR electives. If you have further questions, we would be happy to meet with you to discuss your program plan and specific classes that you are considering taking. Let us know what you decide! Best regards, Academic Advising Team",
+    "response_template": "Hello {student_name},\n\nThanks for reaching out! To find the latest information about the IEOR undergraduate curriculum, you can consult the IEOR Undergraduate curriculum page, available here: https://ieor.columbia.edu/content/undergraduate-curriculum. Here, you will find information about the common IEOR core, as well as specific requirements for each IEOR major and a link to eligible IEOR electives. If you have further questions, we would be happy to meet with you to discuss your program plan and specific classes that you are considering taking. Let us know what you decide! Best regards, Academic Advising Team",
     "follow_up_questions": [
       ""
     ],
@@ -394,7 +394,7 @@
       "I want to talk about which electives to take.",
       "Can I meet with an advisor about electives?"
     ],
-    "response_template": "Hello {student_name},\n\nGreat question! Choosing the right electives is a key part of tailoring your degree to your interests. The approved lists for both management and technical electives can be found on the IEOR Department website in the Undergraduate Curriculum page. The official list is available at {link_to_elective_list}. \n\nHere's a quick guide:\n• **Technical Electives:** These are typically upper-level (3000-level and above) courses in IEOR or a related technical field (e.g. Computer Science, Math, Economics) designed to deepen your expertise. All IEOR majors are required to take at least six credits of IEOR technical electives, and the total number of technical credits required varies by major. \n• **Management Electives:** These courses cover topics like project management, finance, or marketing and are intended to provide you with valuable business context for your technical skills. The number of management credits required also varies by major. \n\nWe highly recommend cross-referencing the approved list with your program plan to confirm how many credits you need. \n\nBest regards,\nAcademic Advising Team",
+    "response_template": "Hello {student_name},\n\nGreat question! Choosing the right electives is a key part of tailoring your degree to your interests. The approved lists for both management and technical electives can be found on the IEOR Department website in the Undergraduate Curriculum page. The official list is available at https://ieor.columbia.edu/undergraduate/electives. \n\nHere's a quick guide:\n• **Technical Electives:** These are typically upper-level (3000-level and above) courses in IEOR or a related technical field (e.g. Computer Science, Math, Economics) designed to deepen your expertise. All IEOR majors are required to take at least six credits of IEOR technical electives, and the total number of technical credits required varies by major. \n• **Management Electives:** These courses cover topics like project management, finance, or marketing and are intended to provide you with valuable business context for your technical skills. The number of management credits required also varies by major. \n\nWe highly recommend cross-referencing the approved list with your program plan to confirm how many credits you need. \n\nBest regards,\nAcademic Advising Team",
     "follow_up_questions": [
       "Would you like to meet to discuss which electives align best with your interests and career goals?"
     ],

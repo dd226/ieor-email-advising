@@ -135,7 +135,7 @@ Previous conversation (for context only — do NOT reply to this, use it to avoi
 
         prompt = textwrap.dedent(
             f"""
-            You are an experienced academic advisor. A student has sent a message, and you have relevant knowledge base information to craft a response.
+            A student has sent a message. Use the knowledge base information below to craft a response.
             {history_section}
             Student's latest message (reply to this):
             {query}
@@ -146,15 +146,10 @@ Previous conversation (for context only — do NOT reply to this, use it to avoi
             Student Information:
             {metadata_lines}
 
-            Supporting References (cite these using [number] notation in your response):
+            Supporting References (you may reference these by name in your response, but do NOT include URLs, markdown links, or bracket notation like [1]):
             {reference_block}
 
-            Write a {self.style} email response addressing only the student's latest message above. Be helpful, warm, and specific. Include relevant details from the knowledge base article. Do not include a references or links section — links will be shown separately in the UI.
-
-            Always end the body with exactly this sign-off on its own lines, preceded by a blank line:
-
-            Best regards,
-            Academic Advising Team
+            Write a {self.style} email response addressing only the student's latest message above. Be specific and include relevant details from the knowledge base article. Do not include a references or links section.
 
             Respond in JSON with keys "subject" and "body" only. Do not include markdown fences.
             """
@@ -246,7 +241,7 @@ Previous conversation (for context only — do NOT reply to this, use it to avoi
 
         prompt = textwrap.dedent(
             f"""
-            You are an experienced academic advisor. Compose a {self.style} email reply using the guidance below.
+            Compose a {self.style} email reply using the guidance below.
             {history_section}
             Student's latest message (reply to this):
             {query}
@@ -259,7 +254,7 @@ Previous conversation (for context only — do NOT reply to this, use it to avoi
             Additional metadata:
             {metadata_lines}
 
-            Supporting references (cite using [number] notation in the body when applicable):
+            Supporting references (you may reference these by name in your response, but do NOT include URLs, markdown links, or bracket notation like [1]):
             {reference_block}
 
             Respond in JSON with keys "subject" and "body" only. Do not include markdown fences.

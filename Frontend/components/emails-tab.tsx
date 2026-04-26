@@ -1586,7 +1586,7 @@ export default function EmailsTab() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Received:{" "}
-                  {new Date(selectedEmail.received_at).toLocaleString("en-US", {
+                  {parseReceivedAt(selectedEmail.received_at).toLocaleString("en-US", {
                     timeZone: "America/New_York",
                     month: "2-digit",
                     day: "2-digit",
