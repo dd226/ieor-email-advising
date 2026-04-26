@@ -38,6 +38,7 @@ def create_openai_llm(
     model: str = "gpt-4o",
     max_tokens: int = 1024,
     system_prompt: str | None = None,
+    temperature: float = 0.1,
 ) -> Callable[[str], str]:
     if api_key is None:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -54,6 +55,7 @@ def create_openai_llm(
             response = client.chat.completions.create(
                 model=model,
                 max_tokens=max_tokens,
+                temperature=temperature,
                 messages=[
                     {"role": "system", "content": resolved_system_prompt},
                     {"role": "user", "content": prompt},
