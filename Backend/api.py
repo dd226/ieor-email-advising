@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 import email
+import smtplib
 from email.header import decode_header
 from email.utils import parseaddr
 from email.message import EmailMessage
@@ -926,6 +927,44 @@ def send_email_via_gmail_api(
     ).execute()
 
 
+def send_email_via_smtp(from_addr: str, to_addr: str, subject: str, body: str) -> None:
+    import html as html_lib
+    smtp_host = os.getenv("SMTP_HOST", "smtp-us.ser.proofpoint.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+
+    msg = EmailMessage()
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    msg["Subject"] = f"Re: {subject}" if not subject.startswith("Re:") else subject
+    msg.set_content(body)
+
+    escaped = html_lib.escape(body)
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.5; color: #333; }}
+        p {{ margin: 0 0 1em 0; }}
+    </style>
+</head>
+<body>
+    {escaped.replace(chr(10), '<br>')}
+</body>
+</html>"""
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        if smtp_user and smtp_pass:
+            server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+
+
 # ---------- Utility: DB session + conversion ----------
 
 def get_db() -> Session:
@@ -1201,20 +1240,17 @@ def ingest_email(email_in: EmailIn):
         if status == EmailStatus.auto:
             if settings.auto_send_enabled and email_in.email_address:
                 try:
-                    creds, gmail_address = load_gmail_credentials()
-                    if creds and creds.valid:
-                        send_email_via_gmail_api(
-                            creds=creds,
-                            from_addr=gmail_address or settings.email_address,
-                            to_addr=email_in.email_address,
-                            subject=email_obj.subject,
-                            body=suggested_reply,
-                        )
-                        email_obj.status = EmailStatus.sent
-                        email_obj.approved_at = datetime.utcnow()
-                        db.add(email_obj)
-                        db.commit()
-                        db.refresh(email_obj)
+                    send_email_via_smtp(
+                        from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
+                        to_addr=email_in.email_address,
+                        subject=email_obj.subject,
+                        body=suggested_reply,
+                    )
+                    email_obj.status = EmailStatus.sent
+                    email_obj.approved_at = datetime.utcnow()
+                    db.add(email_obj)
+                    db.commit()
+                    db.refresh(email_obj)
                 except Exception as exc:
                     print(f"Failed to auto-send email to {email_in.email_address}: {exc}")
                     # Keep status as auto if send fails, don't crash
@@ -1363,16 +1399,15 @@ def sync_emails(limit: int = 20):
             db.refresh(email_obj)
             ingested += 1
 
-            # Optional auto-send via Gmail API
+            # Optional auto-send via SMTP relay
             if (
                 status_enum == EmailStatus.auto
                 and settings.auto_send_enabled
                 and from_addr
             ):
                 try:
-                    send_email_via_gmail_api(
-                        creds=creds,
-                        from_addr=gmail_address or settings.email_address,
+                    send_email_via_smtp(
+                        from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
                         to_addr=from_addr,
                         subject=subject,
                         body=suggested_reply,
@@ -1440,14 +1475,6 @@ def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
         if email_obj is None:
             raise HTTPException(status_code=404, detail="Email not found")
 
-        # Get Gmail credentials
-        creds, gmail_address = load_gmail_credentials()
-        if not creds or not creds.valid:
-            raise HTTPException(
-                status_code=400,
-                detail="Gmail is not connected. Please connect Gmail in Settings.",
-            )
-
         # Determine recipient
         to_addr = email_obj.email_address
         if not to_addr:
@@ -1470,9 +1497,8 @@ def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
 
         # Send the email
         try:
-            send_email_via_gmail_api(
-                creds=creds,
-                from_addr=gmail_address,
+            send_email_via_smtp(
+                from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
                 to_addr=to_addr,
                 subject=email_obj.subject,
                 body=final_reply,
