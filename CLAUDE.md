@@ -60,18 +60,22 @@ Browser → https://advising.ieor.columbia.edu (port 443)
 
 ---
 
-## Current Status (2026-04-23)
+## Current Status (2026-04-27)
 
 ### What Works ✅
 - Full HTTPS at `https://advising.ieor.columbia.edu` (padlock, valid cert)
-- Password login (to be replaced with Google OAuth — plan ready, not yet implemented)
+- Password login via `AuthGate` (sessionStorage-persisted, survives page refresh within tab)
 - Email syncing from Gmail (OAuth 2.0 connected)
-- Email ingestion, deduplication, personal email detection
-- LLM-generated email responses via GPT-4o (confirmed 81% confidence score)
+- Email ingestion, deduplication, personal email detection, email chain parsing
+- LLM-generated email responses via GPT-4o (temperature 0.1, IEOR system prompt)
 - Template fallback for unmatched emails
 - Manual review and bulk actions
-- Email assignment to advisors
+- Email assignment to advisors (assigned tab in UI)
+- Outbound email sending via Proofpoint SMTP relay from `info@ieor.columbia.edu`
+- Knowledge base + reference corpus management UI (Settings tab)
+- Columbia branding, animated metrics, confidence badges
 - All services managed by systemd (auto-restart, start on boot)
+- Running branch: `team-integration`
 
 ### What Needs Setup ⚠️
 - **Google OAuth Login:** Plan is ready (see Future Work). Needs new GCP Web OAuth Client ID before implementing.
@@ -132,11 +136,32 @@ NEXT_PUBLIC_BACKEND_URL=https://advising.ieor.columbia.edu/backend
 ADVISOR_PASSWORD=IEOREMAILADVISOR2026
 ```
 
-### CORS (Backend/api.py ~line 157)
-```python
-_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://128.59.146.240:3000", "https://advising.ieor.columbia.edu"]
+### Backend/.env — SMTP relay (Proofpoint)
 ```
-The `FRONTEND_URL` env var is appended dynamically, so `https://advising.ieor.columbia.edu` appears twice — harmless.
+SMTP_HOST=smtp-us.ser.proofpoint.com
+SMTP_PORT=587
+SMTP_USER=26e4266e-0b2c-4374-929b-5cec9cc923de
+SMTP_PASS=<set — do not commit>
+SMTP_FROM=info@ieor.columbia.edu
+```
+Sending uses `send_email_via_smtp()` in `api.py`. Gmail OAuth is receive-only.
+
+### CORS (Backend/api.py)
+```python
+_cors_origins = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3001", "http://127.0.0.1:3001",
+    "http://128.59.146.240:3000", "http://128.59.149.172:3000",
+    "http://128.59.149.172:3001", "https://advising.ieor.columbia.edu",
+]
+```
+`FRONTEND_URL` env var is appended dynamically — harmless duplicate.
+
+### Next.js config (Frontend/next.config.mjs)
+```js
+allowedDevOrigins: ["advising.ieor.columbia.edu"]
+```
+**Required for Next.js 16** — without this, nginx reverse proxy causes all dev resources to be blocked as cross-origin. Symptom: blank page or auth blink-and-reset.
 
 ### Gmail OAuth (Google Cloud Console)
 - **App mode:** Testing (NOT production — no Google verification needed for single user)
@@ -193,6 +218,8 @@ server {
 | Hydration warning on login | LastPass extension injecting HTML | Disable LastPass on this domain or use incognito — app works fine |
 | Cert renewal fails | Port 80 blocked | `sudo ufw allow 80/tcp` — must stay open always |
 | Frontend not picking up new env var | NEXT_PUBLIC vars baked in at compile | `sudo systemctl restart ieor-frontend` and wait ~30s for recompile |
+| Blank page or auth blink-reset after Next.js 16 upgrade | Missing `allowedDevOrigins` in next.config.mjs | Add `allowedDevOrigins: ["advising.ieor.columbia.edu"]` — restart service |
+| Stale `.next` cache after major dependency change | Old Turbopack runtime files incompatible with new version | `sudo systemctl stop ieor-frontend && rm -rf Frontend/.next && sudo systemctl start ieor-frontend` |
 
 ---
 
@@ -235,13 +262,33 @@ sudo ufw status
 - Discussed dev VM cloning strategy (hot snapshot from Windows Server, own SSL cert needed)
 - **Planned** Google OAuth login (Auth.js v5) — plan at `/home/dd226/.claude/plans/the-website-cuurent-has-tranquil-puddle.md` — NOT YET IMPLEMENTED
 
+### Session 4 (2026-04-27) — SMTP relay + team integration merge
+- Implemented Proofpoint SMTP relay for sending from `info@ieor.columbia.edu` — all 3 send paths use `send_email_via_smtp()`, Gmail OAuth is receive-only
+- Merged team's `origin/main` (lara-dev + mayyada-dev work) into new `team-integration` branch based on `ssl`
+  - Columbia branding, animated metrics, confidence badges, assigned tab
+  - Knowledge base + reference corpus CRUD (Settings tab)
+  - `parse_email_chain()` for email thread handling
+  - LLM temperature → 0.1, IEOR system prompt, semester_config.json
+  - Trash status with DB migration, forward-to-advisor endpoint
+- Fixed Next.js 16 cross-origin dev restriction: added `allowedDevOrigins` to `next.config.mjs`
+- Fixed auth blink-reset: `AuthGate` now persists auth state in `sessionStorage`
+- Branches: `ssl` (tagged `ssl-pre-team-merge`, SMTP committed) and `team-integration` (running) both pushed to `myfork`
+
 ---
 
 ## Git Branches
-- `main` — Trash feature (soft-delete/restore)
-- `feature/trash-tab` — Same as main
-- `before-trash` — Current running branch (all fixes applied here)
-- Remote: `myfork` = https://github.com/dd226/ieor-email-advising
+| Branch | Description |
+|---|---|
+| `team-integration` | **Running branch.** SSL + SMTP relay + full team UI/LLM merge |
+| `ssl` | Production-stable base before team merge. Tagged `ssl-pre-team-merge`. Has SMTP relay. |
+| `main` | Trash feature (soft-delete/restore) — not deployed |
+| `feature/trash-tab` | Same as main |
+| `before-smtp` / `before-ssl` | Older snapshots |
+
+- Remote `myfork` = https://github.com/dd226/ieor-email-advising (push here)
+- Remote `origin` = https://github.com/emrebaser12/IEOR-Email-Advising (team's repo, read-only fetch)
+
+**Rollback to ssl:** `git checkout ssl` + `sudo systemctl restart ieor-backend ieor-frontend`
 
 ---
 
@@ -270,8 +317,7 @@ No backup/recovery plan yet. Recommended approach for warm VM failover:
 ## Future Work
 - **BLOCKING for production backup:** Implement Gmail message ID tracking (see Backup & Recovery section)
 - **Google OAuth Login (plan ready):** Replace password gate with per-user Google OAuth using Auth.js v5. Plan at `/home/dd226/.claude/plans/the-website-cuurent-has-tranquil-puddle.md`. Pre-requisite: create new Web OAuth Client ID in GCP (separate from Gmail client).
-- **Dev VM:** Clone production VM via Windows Server snapshot. Needs own hostname + SSL cert. Update .env files, nginx config, GCP redirect URIs.
-- **Email sending from `info@ieor.columbia.edu`:** Grouper group, no SMTP credentials. Contact Columbia IT for SMTP relay or service account. Backend change: SMTP for sending only, keep Gmail OAuth for receiving.
+- **Dev VM:** Clone production VM via Windows Server snapshot. Needs own hostname + SSL cert. Update .env files, nginx config, GCP redirect URIs, `allowedDevOrigins`.
 - Consider upgrading Python 3.10 → 3.11+ (3.10 EOL: 2026-10-04)
-- Consider `npm run build && npm run start` (production mode) instead of `dev` for better performance
-- Merge `before-trash` fixes into `main`
+- Consider `npm run build && npm run start` (production mode) instead of `dev` — eliminates the `allowedDevOrigins` issue entirely since production mode has no HMR
+- Merge `team-integration` into `main` when stable
