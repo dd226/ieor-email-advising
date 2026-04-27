@@ -2,8 +2,8 @@
 
 An intelligent email management system built for the Columbia IEOR department to help academic advisors respond to student inquiries quickly, consistently, and accurately.
 
-**Developed for:** IEOR 3900 and IEOR 4524 - Columbia University
-**Team:** Emre Baser, Lara Jones, Mayyada Shair, Yasemin Yuksel, Samuel Velez-Hurtado
+**Developed for:** IEOR 4524 - Columbia University
+**Team:** Emre Baser, Lara Jones, Mayyada Shair, Yasemin Yuksel
 **Year:** 2026
 
 ---
@@ -209,20 +209,39 @@ Key facts are extracted from the email body automatically — student name, acad
    ```
    On first run, `sentence-transformers` will download the `multi-qa-MiniLM-L6-cos-v1` model (~90 MB). This happens once and is cached locally.
 
-4. **Set environment variables** (create a `.env` file in `Backend/`):
+4. **Update semester configuration** (`Backend/data/semester_config.json`):
+
+   This file must be updated **at the start of each new semester**. It contains two sections:
+   - `SEMESTER` — values that change every term (deadlines, dates, current term name)
+   - `STATIC_LINKS` — URLs that rarely change (set once, update only if a link moves)
+
+   The backend substitutes these values into response templates at startup. If a value is left as `"TBD"`, that placeholder will appear literally in outgoing emails, so always fill in the semester values before the term begins.
+
+   ```json
+   "SEMESTER": {
+     "term": "Spring 2026",
+     "registration_deadline": "January 21, 2026",
+     "withdrawal_deadline": "April 1, 2026",
+     "graduation_application_deadline": "February 15, 2026",
+     "start_date": "October 1, 2025",
+     "end_date": "October 15, 2025"
+   }
    ```
-   ANTHROPIC_API_KEY=your_api_key_here
+
+5. **Set environment variables** (create a `.env` file in `Backend/`):
+   ```
+   OPENAI_API_KEY=your_openai_key_here
    GOOGLE_OAUTH_CLIENT_FILE=data/google_client_secrets.json
    FRONTEND_URL=http://localhost:3000
    ```
 
-5. **Set up Gmail OAuth** (optional — required for Gmail sync/send):
+6. **Set up Gmail OAuth** (optional — required for Gmail sync/send):
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
    - Create or select a project, enable the Gmail API
    - Create OAuth 2.0 credentials (Desktop app)
    - Download and save as `Backend/data/google_client_secrets.json`
 
-6. **Run the server:**
+7. **Run the server:**
    ```bash
    uvicorn api:app --reload --port 8000
    ```

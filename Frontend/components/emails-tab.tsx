@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import ManualReviewTable from "@/components/manual-review-table";
 import AutoSentTable from "@/components/auto-sent-table";
+import AssignedTable from "@/components/assigned-table";
 import { SAMPLE_EMAILS } from "@/components/sample-emails";
-import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle, RefreshCw, Mail, CheckCircle } from "lucide-react";
+import { CheckSquare, Square, Trash2, Send, Save, X, RotateCcw, Clock, AlertTriangle, RefreshCw, Mail, CheckCircle, Eye, EyeOff } from "lucide-react";
 import { ADVISORS, BACKEND_URL } from "@/lib/constants";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 // Filter types
 type FilterType = 
@@ -17,7 +19,7 @@ type FilterType =
   | "thisMonth"       // Received This Month
   | "thisYear";       // Received This Year
 
-type EmailStatus = "auto" | "review" | "sent" | "personal";
+type EmailStatus = "auto" | "review" | "sent" | "personal" | "trash";
 
 export type Email = {
   id: number;
@@ -104,14 +106,12 @@ function getWaitingTime(received_at: string): WaitingTimeInfo {
     label = hours > 0 ? `${diffDays}d ${hours}h` : `${diffDays}d`;
   }
 
-  // Determine urgency level
+  // Determine urgency level: yellow after 2 days, red after 5 days
   let urgency: "low" | "medium" | "high" | "critical";
-  if (diffHours < 4) {
+  if (diffDays < 2) {
     urgency = "low";
-  } else if (diffHours < 12) {
+  } else if (diffDays < 5) {
     urgency = "medium";
-  } else if (diffHours < 24) {
-    urgency = "high";
   } else {
     urgency = "critical";
   }
@@ -190,13 +190,14 @@ function isReceivedThisYear(received_at: string): boolean {
 export default function EmailsTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
-  const [activeSection, setActiveSection] = useState<"review" | "pending" | "sent" | "personal">("review");
+  const [activeSection, setActiveSection] = useState<"review" | "pending" | "sent" | "personal" | "trash" | "forwarded">("review");
 
   const [emails, setEmails] = useState<Email[]>([]);
   const [reviewEmails, setReviewEmails] = useState<Email[]>([]);
   const [pendingEmails, setPendingEmails] = useState<Email[]>([]);
   const [sentEmails, setSentEmails] = useState<Email[]>([]);
   const [personalEmails, setPersonalEmails] = useState<Email[]>([]);
+  const [trashEmails, setTrashEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState<boolean>(false);
@@ -209,6 +210,28 @@ export default function EmailsTab() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [replyDraft, setReplyDraft] = useState<string>("");
   const [draftSaved, setDraftSaved] = useState<boolean>(false);
+  const [panelWidth, setPanelWidth] = useState(() =>
+    typeof window !== "undefined" ? Math.round(window.innerWidth * 0.5) : 560
+  );
+  const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragState.current = { startX: e.clientX, startWidth: panelWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragState.current) return;
+      const delta = dragState.current.startX - ev.clientX;
+      const next = Math.min(Math.max(dragState.current.startWidth + delta, 400), window.innerWidth * 0.9);
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      dragState.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [panelWidth]);
 
   // metrics from backend - we'll calculate emails_today ourselves
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -226,8 +249,17 @@ export default function EmailsTab() {
   // Assigned persons (localStorage)
   const [assignedPersons, setAssignedPersons] = useState<Record<number, string>>({});
 
+  // Forward confirmation dialog
+  const [forwardPending, setForwardPending] = useState<{ emailId: number; person: string } | null>(null);
+
   // Advisor toggle filter (single-select; null = show all)
   const [advisorFilter, setAdvisorFilter] = useState<string | null>(null);
+
+  // Student filter: "all" | "students" (has UNI) | "non-students" (no UNI)
+  const [studentFilter, setStudentFilter] = useState<"all" | "students" | "non-students">("all");
+
+  // Preview toggle
+  const [showPreview, setShowPreview] = useState(false);
 
   // Updated filters
   const filters: { id: FilterType; label: string; description: string }[] = [
@@ -266,17 +298,57 @@ export default function EmailsTab() {
   }, [savedDrafts]);
 
   // --- Assign a person to an email (persisted to backend) ---
-  async function handleAssignPerson(emailId: number, person: string) {
+  async function doAssign(emailId: number, person: string) {
     setAssignedPersons((prev) => ({ ...prev, [emailId]: person }));
     try {
-      await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assigned_to: person || null }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.detail || "Failed to save assignment", "error");
+      }
     } catch (err) {
       console.error("Failed to save advisor assignment:", err);
+      showToast("Failed to save assignment", "error");
     }
+  }
+
+  function handleAssignPerson(emailId: number, person: string) {
+    if (person) {
+      setForwardPending({ emailId, person });
+    } else {
+      doAssign(emailId, "");
+    }
+  }
+
+  async function handleForwardConfirm() {
+    if (!forwardPending) return;
+    const { emailId, person } = forwardPending;
+    setForwardPending(null);
+    await doAssign(emailId, person);
+    try {
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}/forward`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.detail || "Forward failed — is Gmail connected?", "error");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || "Email forwarded", "success");
+      }
+    } catch (err) {
+      console.error("Failed to forward email:", err);
+      showToast("Assignment saved, but forward failed", "error");
+    }
+  }
+
+  function handleForwardDecline() {
+    if (!forwardPending) return;
+    const { emailId, person } = forwardPending;
+    setForwardPending(null);
+    doAssign(emailId, person);
   }
 
   // --- Toggle an advisor filter pill on/off (single-select) ---
@@ -306,14 +378,17 @@ export default function EmailsTab() {
       setLoading(true);
       setError(null);
 
-      // Fetch all emails
-      const res = await fetch(`${BACKEND_URL}/emails`);
-      if (!res.ok) {
-        throw new Error("Failed to fetch emails from backend");
-      }
+      const [res, trashRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/emails`),
+        fetch(`${BACKEND_URL}/emails?status=trash`),
+      ]);
+      if (!res.ok) throw new Error("Failed to fetch emails from backend");
 
       const allEmails: Email[] = await res.json();
+      const trashed: Email[] = trashRes.ok ? await trashRes.json() : [];
+
       setEmails(allEmails);
+      setTrashEmails(trashed);
 
       // Seed assignedPersons from backend data
       const fromBackend: Record<number, string> = {};
@@ -397,11 +472,15 @@ export default function EmailsTab() {
         received_at: new Date().toISOString(),
       };
 
-      await fetch(`${BACKEND_URL}/emails/ingest`, {
+      const ingestRes = await fetch(`${BACKEND_URL}/emails/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(sampleEmail),
       });
+      if (!ingestRes.ok) {
+        const data = await ingestRes.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to create sample email");
+      }
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
       showToast("Sample email created", "success");
@@ -420,11 +499,15 @@ export default function EmailsTab() {
 
       // First update the reply if changed
       if (newReply !== undefined) {
-        await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+        const patchRes = await fetch(`${BACKEND_URL}/emails/${emailId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ suggested_reply: newReply }),
         });
+        if (!patchRes.ok) {
+          const data = await patchRes.json().catch(() => ({}));
+          throw new Error(data.detail || "Failed to save reply edits");
+        }
       }
 
       // Then send the reply via Gmail
@@ -451,7 +534,6 @@ export default function EmailsTab() {
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
     } catch (err: any) {
-      console.error(err);
       showToast(err.message || "Could not send reply", "error");
     } finally {
       setSending(false);
@@ -466,11 +548,15 @@ export default function EmailsTab() {
         body.suggested_reply = newReply;
       }
 
-      await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+      const approveRes = await fetch(`${BACKEND_URL}/emails/${emailId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!approveRes.ok) {
+        const data = await approveRes.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to approve email");
+      }
 
       // Remove from saved drafts after approval
       setSavedDrafts((prev) => {
@@ -481,38 +567,71 @@ export default function EmailsTab() {
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
       showToast("Email approved", "success");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Could not update email status");
+      showToast(err.message || "Could not update email status", "error");
     }
   }
 
-  // --- Advisor actions: delete email ---
+  // --- Advisor actions: move email to trash (soft delete) ---
   async function handleDelete(emailId: number) {
     try {
-      await fetch(`${BACKEND_URL}/emails/${emailId}`, {
-        method: "DELETE",
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "trash" }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to move email to trash");
+      }
 
-      // Remove from saved drafts
-      setSavedDrafts((prev) => {
-        const updated = { ...prev };
-        delete updated[emailId];
-        return updated;
-      });
-
-      // Remove from selection
-      setSelectedIds((prev) => {
-        const updated = new Set(prev);
-        updated.delete(emailId);
-        return updated;
-      });
+      setSavedDrafts((prev) => { const u = { ...prev }; delete u[emailId]; return u; });
+      setSelectedIds((prev) => { const u = new Set(prev); u.delete(emailId); return u; });
 
       await Promise.all([fetchEmails(), fetchMetrics()]);
-      showToast("Email deleted", "success");
-    } catch (err) {
+      showToast("Email moved to Trash", "success");
+    } catch (err: any) {
       console.error(err);
-      setError("Could not delete email");
+      showToast(err.message || "Could not delete email", "error");
+    }
+  }
+
+  // --- Restore email from trash ---
+  async function handleRestore(emailId: number) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "review" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to restore email");
+      }
+      await Promise.all([fetchEmails(), fetchMetrics()]);
+      showToast("Email restored to Needs Review", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Could not restore email", "error");
+    }
+  }
+
+  // --- Permanently delete email (from trash only) ---
+  async function handlePermanentDelete(emailId: number) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/emails/${emailId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to permanently delete email");
+      }
+      setSavedDrafts((prev) => { const u = { ...prev }; delete u[emailId]; return u; });
+      setSelectedIds((prev) => { const u = new Set(prev); u.delete(emailId); return u; });
+      await Promise.all([fetchEmails(), fetchMetrics()]);
+      showToast("Email permanently deleted", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Could not permanently delete email", "error");
     }
   }
 
@@ -568,6 +687,21 @@ export default function EmailsTab() {
     } catch (err) {
       console.error(err);
       setError("Could not delete selected emails");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  }
+
+  // --- Bulk unassign selected emails ---
+  async function handleBulkUnassign() {
+    if (selectedIds.size === 0) return;
+    setBulkActionLoading(true);
+    try {
+      await Promise.all(Array.from(selectedIds).map((id) => doAssign(id, "")));
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error(err);
+      showToast("Could not unassign selected emails", "error");
     } finally {
       setBulkActionLoading(false);
     }
@@ -746,6 +880,13 @@ export default function EmailsTab() {
       });
     }
 
+    // Student filter
+    if (studentFilter === "students") {
+      filtered = filtered.filter((e) => !!e.uni && e.uni.trim() !== "");
+    } else if (studentFilter === "non-students") {
+      filtered = filtered.filter((e) => !e.uni || e.uni.trim() === "");
+    }
+
     return filtered;
   }
 
@@ -753,6 +894,10 @@ export default function EmailsTab() {
   const filteredPendingEmails = filterEmails(pendingEmails);
   const filteredSentEmails = filterEmails(sentEmails);
   const filteredPersonalEmails = filterEmails(personalEmails);
+  const filteredTrashEmails = filterEmails(trashEmails);
+
+  const forwardedEmails = emails.filter((e) => !!assignedPersons[e.id]);
+  const filteredForwardedEmails = filterEmails(forwardedEmails);
 
   // Calculate the CORRECT emails today count from all emails
   const allEmails = emails;
@@ -766,6 +911,10 @@ export default function EmailsTab() {
       ? filteredPendingEmails.filter((e) => selectedIds.has(e.id)).length
       : activeSection === "personal"
       ? filteredPersonalEmails.filter((e) => selectedIds.has(e.id)).length
+      : activeSection === "trash"
+      ? filteredTrashEmails.filter((e) => selectedIds.has(e.id)).length
+      : activeSection === "forwarded"
+      ? filteredForwardedEmails.filter((e) => selectedIds.has(e.id)).length
       : filteredSentEmails.filter((e) => selectedIds.has(e.id)).length;
 
   const currentEmails =
@@ -775,6 +924,10 @@ export default function EmailsTab() {
       ? filteredPendingEmails
       : activeSection === "personal"
       ? filteredPersonalEmails
+      : activeSection === "trash"
+      ? filteredTrashEmails
+      : activeSection === "forwarded"
+      ? filteredForwardedEmails
       : filteredSentEmails;
 
   const allVisibleSelected = currentEmails.length > 0 && currentEmails.every((e) => selectedIds.has(e.id));
@@ -861,7 +1014,8 @@ export default function EmailsTab() {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="flex flex-col h-full min-h-0">
+        <div className="shrink-0 flex flex-col gap-3">
         {/* Header + Last synced */}
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-foreground">Email Management</h2>
@@ -912,7 +1066,7 @@ export default function EmailsTab() {
           </div>
         </div>
 
-        {/* Quick Filters */}
+        {/* Quick Filters + Student toggle + Preview toggle */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {filters.map((filter) => (
             <button
@@ -928,6 +1082,53 @@ export default function EmailsTab() {
               {filter.label}
             </button>
           ))}
+
+          {/* Student / Non-Student segmented toggle */}
+          <div className="border-l border-border pl-2 ml-1 flex items-center">
+            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium">
+              {(
+                [
+                  { id: "all", label: "All Senders" },
+                  { id: "students", label: "Students" },
+                  { id: "non-students", label: "Non-Students" },
+                ] as const
+              ).map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => setStudentFilter(id)}
+                  className={`px-3 py-1.5 transition-all ${
+                    studentFilter === id
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground hover:bg-muted/70"
+                  }`}
+                  title={
+                    id === "all"
+                      ? "Show all emails"
+                      : id === "students"
+                      ? "Show only emails from students (have a UNI)"
+                      : "Show only emails from non-students (no UNI)"
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-l border-border pl-2 ml-1">
+            <button
+              onClick={() => setShowPreview((p) => !p)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                showPreview
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "bg-muted text-foreground hover:bg-muted/70"
+              }`}
+              title={showPreview ? "Hide email preview" : "Show first lines of each email"}
+            >
+              {showPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              Preview
+            </button>
+          </div>
         </div>
 
         {/* Bulk Actions Bar */}
@@ -957,6 +1158,15 @@ export default function EmailsTab() {
                 >
                   <Send className="h-4 w-4" />
                   Send All
+                </button>
+              )}
+              {activeSection === "forwarded" && (
+                <button
+                  onClick={handleBulkUnassign}
+                  disabled={bulkActionLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-60"
+                >
+                  Unassign All
                 </button>
               )}
               <button
@@ -1011,6 +1221,16 @@ export default function EmailsTab() {
             Sent ({filteredSentEmails.length})
           </button>
           <button
+            onClick={() => setActiveSection("forwarded")}
+            className={`pb-3 px-1 font-medium text-sm transition-all ${
+              activeSection === "forwarded"
+                ? "text-purple-600 border-b-2 border-purple-600"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Assigned ({filteredForwardedEmails.length})
+          </button>
+          <button
             onClick={() => setActiveSection("personal")}
             className={`pb-3 px-1 font-medium text-sm transition-all ${
               activeSection === "personal"
@@ -1020,13 +1240,27 @@ export default function EmailsTab() {
           >
             ⚠ Personal ({filteredPersonalEmails.length})
           </button>
+          <button
+            onClick={() => setActiveSection("trash")}
+            className={`pb-3 px-1 font-medium text-sm transition-all ${
+              activeSection === "trash"
+                ? "text-gray-600 border-b-2 border-gray-600"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <span className="flex items-center gap-1">
+              <Trash2 className="w-3.5 h-3.5" />
+              Trash ({filteredTrashEmails.length})
+            </span>
+          </button>
         </div>
-
+        </div>{/* end shrink-0 controls */}
+        <div className="flex-1 min-h-0 flex flex-col pt-3 pb-4">
         {/* Tables + per-section search boxes */}
         {activeSection === "review" && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-3 h-full min-h-0">
             {/* Search bar + Select All for Needs Review */}
-            <div className="flex items-center gap-3">
+            <div className="shrink-0 flex items-center gap-3">
               <Input
                 placeholder="Search by student name, UNI, or subject..."
                 value={searchTerm}
@@ -1049,8 +1283,8 @@ export default function EmailsTab() {
                 </button>
               )}
             </div>
-            {advisorFilterRow}
-
+            <div className="shrink-0">{advisorFilterRow}</div>
+            <div className="flex-1 min-h-0">
             <ManualReviewTable
               emails={filteredReviewEmails}
               searchTerm={searchTerm}
@@ -1062,14 +1296,16 @@ export default function EmailsTab() {
               savedDrafts={savedDrafts}
               assignedPersons={assignedPersons}
               onAssignPerson={handleAssignPerson}
+              showPreview={showPreview}
             />
+            </div>
           </div>
         )}
 
         {activeSection === "pending" && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-3 h-full min-h-0">
             {/* Search bar + Select All for Pending Send */}
-            <div className="flex items-center gap-3">
+            <div className="shrink-0 flex items-center gap-3">
               <Input
                 placeholder="Search by student name, UNI, or subject..."
                 value={searchTerm}
@@ -1092,8 +1328,8 @@ export default function EmailsTab() {
                 </button>
               )}
             </div>
-            {advisorFilterRow}
-
+            <div className="shrink-0">{advisorFilterRow}</div>
+            <div className="flex-1 min-h-0">
             <AutoSentTable
               emails={filteredPendingEmails}
               searchTerm={searchTerm}
@@ -1102,29 +1338,30 @@ export default function EmailsTab() {
               onSend={handleApproveAndSend}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
-              gmailConnected={gmailConnected}
               sending={sending}
               savedDrafts={savedDrafts}
               mode="pending"
               assignedPersons={assignedPersons}
               onAssignPerson={handleAssignPerson}
+              showPreview={showPreview}
             />
+            </div>
           </div>
         )}
 
         {activeSection === "personal" && (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+          <div className="flex flex-col gap-3 h-full min-h-0">
+            <div className="shrink-0 rounded-lg border border-red-200 bg-red-50 p-4">
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="h-5 w-5 text-red-600" />
                 <p className="font-semibold text-red-700">Personal / Sensitive Emails</p>
               </div>
               <p className="text-sm text-red-600">
-                These emails contain personal or sensitive topics and require direct advisor attention. 
+                These emails contain personal or sensitive topics and require direct advisor attention.
                 They will never be auto-sent.
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="shrink-0 flex items-center gap-3">
               <Input
                 type="text"
                 placeholder="Search personal emails..."
@@ -1133,7 +1370,8 @@ export default function EmailsTab() {
                 className="max-w-sm"
               />
             </div>
-            {advisorFilterRow}
+            <div className="shrink-0">{advisorFilterRow}</div>
+            <div className="flex-1 min-h-0">
             <ManualReviewTable
               emails={filteredPersonalEmails}
               searchTerm={searchTerm}
@@ -1145,14 +1383,129 @@ export default function EmailsTab() {
               savedDrafts={savedDrafts}
               assignedPersons={assignedPersons}
               onAssignPerson={handleAssignPerson}
+              showPreview={showPreview}
             />
+            </div>
+          </div>
+        )}
+
+        {activeSection === "trash" && (
+          <div className="flex flex-col gap-3 h-full min-h-0">
+            <div className="shrink-0 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-900/20 dark:border-gray-700 p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Trash2 className="h-5 w-5 text-gray-500" />
+                <p className="font-semibold text-gray-700 dark:text-gray-300">Trash</p>
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Deleted emails are kept here. Restore them to move back to Needs Review, or permanently delete them.
+              </p>
+            </div>
+            <div className="shrink-0 flex items-center gap-3">
+              <Input
+                type="text"
+                placeholder="Search trash..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-sm"
+              />
+            </div>
+            {filteredTrashEmails.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">Trash is empty.</p>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+                    <tr>
+                      <th className="px-4 py-2 text-left">From</th>
+                      <th className="px-4 py-2 text-left">Subject</th>
+                      <th className="px-4 py-2 text-left">Received</th>
+                      <th className="px-4 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filteredTrashEmails.map((email) => (
+                      <tr key={email.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-3 font-medium">{email.student_name ?? "Unknown"}{email.uni ? ` (${email.uni})` : ""}</td>
+                        <td className="px-4 py-3 text-muted-foreground truncate max-w-xs">{email.subject}</td>
+                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                          {new Date(email.received_at).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2 justify-end">
+                            <button
+                              onClick={() => handleRestore(email.id)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              Restore
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (window.confirm("Permanently delete this email? This cannot be undone.")) {
+                                  await handlePermanentDelete(email.id);
+                                }
+                              }}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete forever
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeSection === "forwarded" && (
+          <div className="flex flex-col gap-3 h-full min-h-0">
+            <div className="shrink-0 flex items-center gap-3">
+              <Input
+                placeholder="Search by student name, UNI, or subject..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-md"
+              />
+              {filteredForwardedEmails.length > 0 && (
+                <button
+                  onClick={() =>
+                    allVisibleSelected ? deselectAll() : selectAllVisible(filteredForwardedEmails)
+                  }
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-muted text-foreground hover:bg-muted/70"
+                >
+                  {allVisibleSelected ? (
+                    <CheckSquare className="h-4 w-4" />
+                  ) : (
+                    <Square className="h-4 w-4" />
+                  )}
+                  {allVisibleSelected ? "Deselect All" : "Select All"}
+                </button>
+              )}
+            </div>
+            <div className="shrink-0">{advisorFilterRow}</div>
+            <div className="flex-1 min-h-0">
+              <AssignedTable
+                emails={filteredForwardedEmails}
+                assignedPersons={assignedPersons}
+                onUnassign={(id) => doAssign(id, "")}
+                onSelect={handleSelect}
+                savedDrafts={savedDrafts}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+                showPreview={showPreview}
+              />
+            </div>
           </div>
         )}
 
         {activeSection === "sent" && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-3 h-full min-h-0">
             {/* Search bar + Select All for Sent */}
-            <div className="flex items-center gap-3">
+            <div className="shrink-0 flex items-center gap-3">
               <Input
                 placeholder="Search by student name, UNI, or subject..."
                 value={searchTerm}
@@ -1175,8 +1528,8 @@ export default function EmailsTab() {
                 </button>
               )}
             </div>
-            {advisorFilterRow}
-
+            <div className="shrink-0">{advisorFilterRow}</div>
+            <div className="flex-1 min-h-0">
             <AutoSentTable
               emails={filteredSentEmails}
               searchTerm={searchTerm}
@@ -1188,15 +1541,25 @@ export default function EmailsTab() {
               mode="sent"
               assignedPersons={assignedPersons}
               onAssignPerson={handleAssignPerson}
+              showPreview={showPreview}
             />
+            </div>
           </div>
         )}
+        </div>{/* end flex-1 table area */}
       </div>
 
       {/* Detail Panel */}
       {selectedEmail && (
         <div className="fixed inset-0 bg-black/40 flex justify-end z-50">
-          <div className="w-full max-w-xl bg-background h-full shadow-xl p-6 overflow-y-auto">
+          <div className="relative bg-background h-full shadow-xl overflow-y-auto flex flex-col" style={{ width: panelWidth }}>
+            {/* Drag handle */}
+            <div
+              onMouseDown={handleDragStart}
+              className="absolute left-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50 transition-colors z-10"
+              title="Drag to resize"
+            />
+            <div className="p-6 flex-1">
             <div className="flex items-start justify-between mb-4">
               <div className="space-y-1">
                 <h3 className="text-lg font-semibold">
@@ -1225,7 +1588,7 @@ export default function EmailsTab() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Received:{" "}
-                  {new Date(selectedEmail.received_at).toLocaleString("en-US", {
+                  {parseReceivedAt(selectedEmail.received_at).toLocaleString("en-US", {
                     timeZone: "America/New_York",
                     month: "2-digit",
                     day: "2-digit",
@@ -1262,8 +1625,6 @@ export default function EmailsTab() {
                             ? "bg-green-100 text-green-800"
                             : waitTime.urgency === "medium"
                             ? "bg-yellow-100 text-yellow-800"
-                            : waitTime.urgency === "high"
-                            ? "bg-orange-100 text-orange-800"
                             : "bg-red-100 text-red-800"
                         }`}
                       >
@@ -1437,9 +1798,35 @@ export default function EmailsTab() {
             <p className="mt-4 text-xs text-muted-foreground">
               Press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd> to close
             </p>
+            </div>{/* end p-6 */}
           </div>
         </div>
       )}
+      {/* Forward confirmation dialog */}
+      <Dialog open={!!forwardPending} onOpenChange={(open) => { if (!open) handleForwardDecline(); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Forward this email?</DialogTitle>
+            <DialogDescription>
+              {forwardPending?.person} will be assigned and a copy of this email will be forwarded to <strong>lj2574@columbia.edu</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={handleForwardDecline}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-border text-foreground hover:bg-muted/40"
+            >
+              No, just assign
+            </button>
+            <button
+              onClick={handleForwardConfirm}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Yes, forward
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

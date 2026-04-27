@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import base64
 import ipaddress
@@ -76,6 +77,7 @@ CLIENT_SECRETS_FILE = os.getenv(
 )
 GMAIL_TOKEN_PATH = DATA_DIR / "gmail_token.json"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_PUBLIC_URL = os.getenv("BACKEND_URL", "https://advising.ieor.columbia.edu/backend")
 
 # In-memory store for OAuth flows keyed by state: state -> (flow, created_at_unix)
 OAUTH_STATE_TTL = 600  # 10 minutes
@@ -155,7 +157,16 @@ def _is_safe_fetch_url(url: str) -> tuple[bool, str]:
 
 app = FastAPI(title="Email Advising System API")
 
-_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://128.59.146.240:3000", "https://advising.ieor.columbia.edu"]
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://128.59.146.240:3000",
+    "http://128.59.149.172:3000",
+    "http://128.59.149.172:3001",
+    "https://advising.ieor.columbia.edu",
+]
 if FRONTEND_URL and FRONTEND_URL not in _cors_origins:
     _cors_origins.append(FRONTEND_URL)
 
@@ -200,9 +211,8 @@ except ValueError:
 
 try:
     advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=embedder)
-except Exception as e:
-    # Fall back to no embedder if initialization fails (e.g., bad OpenAI key)
-    print(f"Warning: Could not initialize advisor with embedder: {e}")
+except Exception as _emb_err:
+    print(f"Warning: Could not initialize embeddings ({_emb_err}). Falling back to keyword matching only.")
     advisor = EmailAdvisor(knowledge_base, retriever=retriever, composer=composer, embedding_model=None)
 personal_detector = PersonalEmailDetector()
 
@@ -271,7 +281,11 @@ def reload_retriever():
 def rebuild_advisor():
     """Recreate the EmailAdvisor with the latest knowledge base + corpus."""
     global advisor
-    advisor = EmailAdvisor(knowledge_base, retriever=retriever, embedding_model=embedder)
+    try:
+        advisor = EmailAdvisor(knowledge_base, retriever=retriever, embedding_model=embedder)
+    except Exception as _emb_err:
+        print(f"Warning: Could not initialize embeddings ({_emb_err}). Falling back to keyword matching only.")
+        advisor = EmailAdvisor(knowledge_base, retriever=retriever, embedding_model=None)
 
 
 def replace_knowledge_base(articles: List[KnowledgeArticle]):
@@ -638,6 +652,7 @@ class EmailStatus(str, Enum):
     review = "review"      # needs manual review
     sent = "sent"          # reply has been sent
     personal = "personal"  # flagged as personal / sensitive — never auto-send
+    trash = "trash"        # soft-deleted; recoverable from Trash tab
 
 
 # ---------- Pydantic models (API schemas) ----------
@@ -765,7 +780,7 @@ Base.metadata.create_all(bind=engine)
 
 
 def _migrate_db():
-    """Add columns introduced after initial schema creation."""
+    """Add columns and enum values introduced after initial schema creation."""
     from sqlalchemy import inspect as sa_inspect
     inspector = sa_inspect(engine)
     if not inspector.has_table("emails"):
@@ -777,6 +792,20 @@ def _migrate_db():
             conn.commit()
         if "references_json" not in existing:
             conn.execute(text("ALTER TABLE emails ADD COLUMN references_json TEXT"))
+            conn.commit()
+        if "email_address" not in existing:
+            conn.execute(text("ALTER TABLE emails ADD COLUMN email_address VARCHAR"))
+            conn.commit()
+        if "approved_at" not in existing:
+            conn.execute(text("ALTER TABLE emails ADD COLUMN approved_at TIMESTAMP"))
+            conn.commit()
+        # PostgreSQL enums are strict — add any new values that weren't in the
+        # original schema. SQLite ignores these safely.
+        if not DATABASE_URL.startswith("sqlite"):
+            for value in ("personal", "trash"):
+                conn.execute(text(
+                    f"ALTER TYPE emailstatus ADD VALUE IF NOT EXISTS '{value}'"
+                ))
             conn.commit()
 
 
@@ -875,6 +904,61 @@ def extract_text_from_email(msg: email.message.Message) -> str:
             return msg.get_payload(decode=True).decode(charset, errors="ignore")
         except Exception:
             return ""
+
+
+_QUOTED_PATTERNS = re.compile(
+    r"""
+    # "On <date>, <name> wrote:" style reply headers
+    ^\s*On\s+.+wrote:\s*$
+    |
+    # Outlook-style "From: ... Sent: ... To: ... Subject: ..." block
+    ^\s*From:\s+.+
+    |
+    # Gmail/Outlook divider lines
+    ^\s*-{3,}.*Original\s+Message.*-{3,}\s*$
+    |
+    # Forwarded message header
+    ^\s*-{3,}\s*Forwarded\s+message\s*-{3,}\s*$
+    """,
+    re.VERBOSE | re.IGNORECASE | re.MULTILINE,
+)
+
+# Matches "On ... wrote:" even when Gmail wraps it across two lines.
+# Uses [^\n] instead of . so we don't accidentally cross more than one newline.
+_ATTRIBUTION_MULTILINE_RE = re.compile(
+    r'^\s*On\s+[^\n]{0,300}\n?[^\n]{0,200}wrote:\s*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def parse_email_chain(body: str) -> tuple[str, str]:
+    """Split an email body into (latest_message, prior_chain).
+
+    Returns the text the sender just wrote and everything quoted below it.
+    If there is no quoted content, prior_chain is an empty string.
+    """
+    lines = body.splitlines()
+    cutoff = len(lines)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(">"):
+            cutoff = i
+            break
+        if _QUOTED_PATTERNS.match(line):
+            cutoff = i
+            break
+
+    # Secondary pass: catch "On ... wrote:" attribution headers that Gmail
+    # wraps across two lines (the single-line regex above misses these).
+    m = _ATTRIBUTION_MULTILINE_RE.search(body)
+    if m:
+        attr_line = body[: m.start()].count("\n")
+        if attr_line < cutoff:
+            cutoff = attr_line
+
+    latest = "\n".join(lines[:cutoff]).strip()
+    prior = "\n".join(lines[cutoff:]).strip()
+    return latest, prior
 
 
 def send_email_via_gmail_api(
@@ -1095,11 +1179,10 @@ def gmail_auth_url():
             "Expected at GOOGLE_OAUTH_CLIENT_FILE or data/google_client_secrets.json",
         )
 
-    backend_url = os.getenv("BACKEND_URL", "http://128.59.149.172:8000")
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri=f"{backend_url}/gmail/oauth2callback",
+        redirect_uri=f"{BACKEND_PUBLIC_URL}/gmail/oauth2callback",
     )
 
     # NOTE: include_granted_scopes removed – it was causing the 400 error.
@@ -1177,11 +1260,13 @@ def ingest_email(email_in: EmailIn):
     """
     received_at = email_in.received_at or datetime.utcnow()
 
-    # Run advisor on the body (what the student actually wrote)
-    result = advisor.process_query(
-        email_in.body,
-        {"student_name": email_in.student_name},
-    )
+    # Split chain: use only the latest message for semantic ranking/metadata,
+    # but pass the prior chain to the composer for LLM context.
+    latest_body, prior_chain = parse_email_chain(email_in.body)
+    query_metadata: dict = {"student_name": email_in.student_name}
+    if prior_chain:
+        query_metadata["_conversation_history"] = prior_chain
+    result = advisor.process_query(latest_body, query_metadata)
 
     confidence = float(result.confidence or 0.0)
     suggested_reply = result.body
@@ -1225,7 +1310,7 @@ def ingest_email(email_in: EmailIn):
             uni=email_in.uni,
             email_address=email_in.email_address,
             subject=email_in.subject,
-            body=email_in.body,
+            body=latest_body,
             confidence=confidence,
             status=status,
             suggested_reply=suggested_reply,
@@ -1266,7 +1351,7 @@ def ingest_email(email_in: EmailIn):
 
 
 @app.post("/emails/sync")
-def sync_emails(limit: int = 20):
+def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
     """
     Use Gmail API (OAuth) to pull unread emails, run them through the advisor,
     store them in SQLite, and optionally auto-send replies.
@@ -1317,7 +1402,8 @@ def sync_emails(limit: int = 20):
 
             from_name, from_addr = parseaddr(msg.get("From", ""))
 
-            body = extract_text_from_email(msg)
+            latest_body, prior_chain = parse_email_chain(extract_text_from_email(msg))
+            body = latest_body
             if not body.strip():
                 # Mark as read but skip storing empty messages
                 service.users().messages().modify(
@@ -1342,10 +1428,10 @@ def sync_emails(limit: int = 20):
                 ).execute()
                 continue
 
-            result = advisor.process_query(
-                body,
-                {"student_name": from_name},
-            )
+            sync_metadata: dict = {"student_name": from_name}
+            if prior_chain:
+                sync_metadata["_conversation_history"] = prior_chain
+            result = advisor.process_query(body, sync_metadata)
             confidence = float(result.confidence or 0.0)
             suggested_reply = result.body
 
@@ -1454,7 +1540,7 @@ def gmail_fetch(limit: int = Query(default=20, ge=1, le=100, description="Max em
     Fetch new emails from Gmail. GET endpoint for easy triggering.
     This is an alias for POST /emails/sync for convenience.
     """
-    return sync_emails(limit=int(limit))
+    return sync_emails(limit=limit)
 
 
 # =====================================================
@@ -1527,6 +1613,66 @@ def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
 
 
 # =====================================================
+# Forward email to advisor
+# =====================================================
+
+ADVISOR_EMAILS = {
+    "Winsor":   "lj2574@columbia.edu",
+    "Kelly":    "lj2574@columbia.edu",
+    "Sabrina":  "lj2574@columbia.edu",
+    "Samantha": "lj2574@columbia.edu",
+    "Christine":"lj2574@columbia.edu",
+    "Jean":     "lj2574@columbia.edu",
+}
+FORWARD_FALLBACK = "lj2574@columbia.edu"
+
+
+@app.post("/emails/{email_id}/forward")
+def forward_email_to_advisor(email_id: int):
+    """
+    Forward the original email to the assigned advisor's email address.
+    """
+    db = SessionLocal()
+    try:
+        email_obj = db.query(EmailORM).filter(EmailORM.id == email_id).first()
+        if email_obj is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        creds, gmail_address = load_gmail_credentials()
+        if not creds or not creds.valid:
+            raise HTTPException(
+                status_code=400,
+                detail="Gmail is not connected. Please connect Gmail in Settings.",
+            )
+
+        advisor_name = email_obj.assigned_to or ""
+        to_addr = ADVISOR_EMAILS.get(advisor_name, FORWARD_FALLBACK)
+
+        forward_body = (
+            f"This email has been assigned to {advisor_name or 'an advisor'} and forwarded for your review.\n\n"
+            f"--- Original Message ---\n"
+            f"From: {email_obj.email_address or email_obj.uni or 'Unknown'}\n"
+            f"Subject: {email_obj.subject}\n\n"
+            f"{email_obj.body}"
+        )
+
+        try:
+            send_email_via_gmail_api(
+                creds=creds,
+                from_addr=gmail_address,
+                to_addr=to_addr,
+                subject=f"[Forwarded] {email_obj.subject}",
+                body=forward_body,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to forward email: {str(exc)}")
+
+        return {"ok": True, "message": f"Email forwarded to {to_addr}"}
+    finally:
+        db.close()
+
+
+# =====================================================
 # Gmail disconnect
 # =====================================================
 
@@ -1570,6 +1716,8 @@ def list_emails(
         query = db.query(EmailORM)
         if status is not None:
             query = query.filter(EmailORM.status == status)
+        else:
+            query = query.filter(EmailORM.status != EmailStatus.trash)
         query = query.order_by(EmailORM.received_at.desc())
         emails = query.all()
         return [orm_to_schema(e) for e in emails]
@@ -1673,8 +1821,8 @@ def metrics():
     """
     db = SessionLocal()
     try:
-        # Total emails
-        total = db.query(func.count(EmailORM.id)).scalar() or 0
+        # Total emails (excluding trash)
+        total = db.query(func.count(EmailORM.id)).filter(EmailORM.status != EmailStatus.trash).scalar() or 0
 
         # =====================================================
         # FIXED: Calculate "emails today" based on Eastern Time calendar day
@@ -1692,6 +1840,7 @@ def metrics():
         emails_today = (
             db.query(func.count(EmailORM.id))
             .filter(EmailORM.received_at >= start_of_today_utc)
+            .filter(EmailORM.status != EmailStatus.trash)
             .scalar()
             or 0
         )
@@ -1716,8 +1865,8 @@ def metrics():
             or 0
         )
 
-        # Average confidence for ALL emails
-        avg_conf = db.query(func.avg(EmailORM.confidence)).scalar()
+        # Average confidence for ALL non-trash emails
+        avg_conf = db.query(func.avg(EmailORM.confidence)).filter(EmailORM.status != EmailStatus.trash).scalar()
         if avg_conf is None:
             avg_conf = 0.0
 

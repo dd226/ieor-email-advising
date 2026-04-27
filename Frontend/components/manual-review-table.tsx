@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { Email } from "./emails-tab";
-import { CheckSquare, Square, Clock, Send } from "lucide-react";
+import { CheckSquare, Square, Send } from "lucide-react";
 import DraftBadge from "./draft-badge";
 import { ADVISORS } from "@/lib/constants";
 
@@ -20,7 +20,16 @@ type ManualReviewTableProps = {
   savedDrafts?: Record<number, string>;
   assignedPersons?: Record<number, string>;
   onAssignPerson?: (emailId: number, person: string) => void;
+  showPreview?: boolean;
 };
+
+function getPreviewText(body: string, maxLength = 180): string {
+  const stripped = body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (stripped.length <= maxLength) return stripped;
+  const truncated = stripped.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(" ");
+  return (lastSpace > 80 ? truncated.slice(0, lastSpace) : truncated) + "…";
+}
 
 function formatReceivedEastern(received_at: string) {
   if (!received_at) return "—";
@@ -108,6 +117,7 @@ export default function ManualReviewTable({
   savedDrafts = {},
   assignedPersons = {},
   onAssignPerson,
+  showPreview = false,
 }: ManualReviewTableProps) {
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortOrder, setSortOrder] = useState<SortOrder>(null);
@@ -174,8 +184,14 @@ export default function ManualReviewTable({
 
   if (emails.length === 0) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No emails needing review.
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="h-16 w-16 rounded-full bg-amber-50 flex items-center justify-center mb-4">
+          <svg className="h-8 w-8 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-foreground">All caught up!</p>
+        <p className="text-sm text-muted-foreground mt-1">No emails are waiting for review.</p>
       </div>
     );
   }
@@ -183,19 +199,19 @@ export default function ManualReviewTable({
   const thClass = "px-4 py-2 text-left cursor-pointer select-none hover:bg-muted/70 whitespace-nowrap";
 
   return (
-    <div className="overflow-x-auto overflow-y-auto max-h-80 rounded-lg border border-border bg-card">
+    <div className="overflow-auto h-full rounded-lg border border-border bg-card">
       <table className="w-full text-sm">
         <thead className="bg-muted sticky top-0 z-10">
           <tr>
             {onToggleSelect && (
-              <th className="px-3 py-2 text-left w-10">
+              <th className="px-4 py-2 text-left w-10">
                 <span className="sr-only">Select</span>
               </th>
             )}
             <th className={thClass} onClick={() => handleSort("student")}>
               Student <SortIcon field="student" sortField={sortField} sortOrder={sortOrder} />
             </th>
-            <th className={`${thClass} w-20`} onClick={() => handleSort("uni")}>
+            <th className={thClass} onClick={() => handleSort("uni")}>
               UNI <SortIcon field="uni" sortField={sortField} sortOrder={sortOrder} />
             </th>
             <th className={thClass} onClick={() => handleSort("subject")}>
@@ -207,25 +223,21 @@ export default function ManualReviewTable({
             <th className={thClass} onClick={() => handleSort("confidence")}>
               Confidence <SortIcon field="confidence" sortField={sortField} sortOrder={sortOrder} />
             </th>
-            <th className={thClass} onClick={() => handleSort("waiting")}>
-              Waiting <SortIcon field="waiting" sortField={sortField} sortOrder={sortOrder} />
-            </th>
             <th className={thClass} onClick={() => handleSort("received")}>
               Received <SortIcon field="received" sortField={sortField} sortOrder={sortOrder} />
             </th>
-            <th className="px-4 py-2 text-left w-60">Actions</th>
+            <th className="px-4 py-2 text-left">Actions</th>
           </tr>
         </thead>
         <tbody>
           {sortedEmails.map((email) => {
             const isSelected = selectedIds.has(email.id);
             const hasDraft = !!savedDrafts[email.id];
-            const waitingTime = getWaitingTime(email.received_at);
             const assigned = assignedPersons[email.id] ?? "";
 
             return (
+              <Fragment key={email.id}>
               <tr
-                key={email.id}
                 className={`border-t border-border transition-colors ${
                   isSelected
                     ? "bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-900/50"
@@ -254,11 +266,11 @@ export default function ManualReviewTable({
                   </div>
                 </td>
 
-                <td className="px-4 py-2 w-20 whitespace-nowrap">
+                <td className="px-4 py-2 whitespace-nowrap">
                   {email.uni ?? "—"}
                 </td>
 
-                <td className="px-4 py-2 w-40 max-w-40">
+                <td className="px-4 py-2 min-w-0">
                   <span className="block truncate" title={email.subject}>
                     {email.subject}
                   </span>
@@ -271,7 +283,7 @@ export default function ManualReviewTable({
                     onChange={(e) => onAssignPerson?.(email.id, e.target.value)}
                     className="w-full text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    <option value="">— Unassigned —</option>
+                    <option value="">Unassigned</option>
                     {ADVISORS.map((name) => (
                       <option key={name} value={name}>
                         {name}
@@ -294,21 +306,6 @@ export default function ManualReviewTable({
                   >
                     {(email.confidence * 100).toFixed(0)}%
                   </span>
-                </td>
-
-                <td className="px-4 py-2">
-                  <div
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                      waitingTime.severity === "green"
-                        ? "bg-green-100 text-green-800"
-                        : waitingTime.severity === "yellow"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : "bg-red-100 text-red-800"
-                    }`}
-                  >
-                    <Clock className="h-3 w-3" />
-                    {waitingTime.label}
-                  </div>
                 </td>
 
                 <td className="px-4 py-2">
@@ -337,6 +334,14 @@ export default function ManualReviewTable({
                   </button>
                 </td>
               </tr>
+              {showPreview && (
+                <tr className={isSelected ? "bg-blue-50 dark:bg-blue-900/20" : "bg-muted/10"}>
+                  <td colSpan={100} className="px-4 pb-2 pt-0 text-xs text-muted-foreground leading-relaxed">
+                    {getPreviewText(email.body)}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             );
           })}
         </tbody>
