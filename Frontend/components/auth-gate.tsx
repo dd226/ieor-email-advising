@@ -1,12 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+const SESSION_KEY = "ieor_advisor_auth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    if (sessionStorage.getItem(SESSION_KEY) === "true") {
+      setAuthenticated(true);
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -20,6 +30,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     });
 
     if (res.ok) {
+      sessionStorage.setItem(SESSION_KEY, "true");
       setAuthenticated(true);
     } else {
       const data = await res.json();
@@ -28,7 +39,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (!authenticated) {
+  // Show children only after mount confirms auth — always show form while waiting
+  if (!mounted || !authenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="w-full max-w-sm bg-white dark:bg-gray-900 rounded-2xl shadow-md p-8">
@@ -63,4 +75,5 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   return <>{children}</>;
+
 }
