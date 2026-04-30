@@ -1617,14 +1617,15 @@ def send_email_reply(email_id: int, payload: Optional[SendEmailRequest] = None):
 # =====================================================
 
 ADVISOR_EMAILS = {
-    "Winsor":   "lj2574@columbia.edu",
-    "Kelly":    "lj2574@columbia.edu",
-    "Sabrina":  "lj2574@columbia.edu",
-    "Samantha": "lj2574@columbia.edu",
-    "Christine":"lj2574@columbia.edu",
-    "Jean":     "lj2574@columbia.edu",
+    "Winsor":   "wy2396@columbia.edu",
+    "Kelly":    "kk3813@columbia.edu",
+    "Sabrina":  "sl5163@columbia.edu",
+    "Samantha": "sas2538@columbia.edu",
+    "Christine":"cc5201@columbia.edu",
+    "Jean":     "jf2827@columbia.edu",
+    "Monique":  "dh3347@columbia.edu",
 }
-FORWARD_FALLBACK = "lj2574@columbia.edu"
+FORWARD_FALLBACK = "kk3813@columbia.edu"
 
 
 @app.post("/emails/{email_id}/forward")
@@ -1638,13 +1639,6 @@ def forward_email_to_advisor(email_id: int):
         if email_obj is None:
             raise HTTPException(status_code=404, detail="Email not found")
 
-        creds, gmail_address = load_gmail_credentials()
-        if not creds or not creds.valid:
-            raise HTTPException(
-                status_code=400,
-                detail="Gmail is not connected. Please connect Gmail in Settings.",
-            )
-
         advisor_name = email_obj.assigned_to or ""
         to_addr = ADVISOR_EMAILS.get(advisor_name, FORWARD_FALLBACK)
 
@@ -1657,9 +1651,8 @@ def forward_email_to_advisor(email_id: int):
         )
 
         try:
-            send_email_via_gmail_api(
-                creds=creds,
-                from_addr=gmail_address,
+            send_email_via_smtp(
+                from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
                 to_addr=to_addr,
                 subject=f"[Forwarded] {email_obj.subject}",
                 body=forward_body,

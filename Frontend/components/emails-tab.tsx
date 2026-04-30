@@ -333,7 +333,7 @@ export default function EmailsTab() {
       const res = await fetch(`${BACKEND_URL}/emails/${emailId}/forward`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        showToast(data.detail || "Forward failed — is Gmail connected?", "error");
+        showToast(data.detail || "Forward failed", "error");
       } else {
         const data = await res.json().catch(() => ({}));
         showToast(data.message || "Email forwarded", "success");
@@ -1808,7 +1808,7 @@ export default function EmailsTab() {
           <DialogHeader>
             <DialogTitle>Forward this email?</DialogTitle>
             <DialogDescription>
-              {forwardPending?.person} will be assigned and a copy of this email will be forwarded to <strong>lj2574@columbia.edu</strong>.
+              {forwardPending?.person} will be assigned and a copy of this email will be forwarded to their inbox.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
