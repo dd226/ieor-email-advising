@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Moon, Sun, User } from "lucide-react"
+import { Moon, Sun, User, LogOut } from "lucide-react"
 import { useTheme } from "next-themes"
 
 type AdvisorProfile = {
@@ -72,7 +72,7 @@ export default function HeaderTop() {
           })}
         </p>
 
-        {/* Right side: theme toggle + profile */}
+        {/* Right side: theme toggle + profile + logout */}
         <div className="flex items-center gap-4">
         {/* Dark mode toggle */}
         <button
@@ -97,6 +97,19 @@ export default function HeaderTop() {
             </p>
           </div>
         </div>
+
+        {/* Logout */}
+        <button
+          onClick={() => {
+            sessionStorage.removeItem("ieor_advisor_auth")
+            window.location.reload()
+          }}
+          className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"
+          aria-label="Log out"
+          title="Log out"
+        >
+          <LogOut className="h-4 w-4" />
+        </button>
         </div>
       </div>
     </header>

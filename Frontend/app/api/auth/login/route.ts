@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://advising.ieor.columbia.edu/backend";
+// Use internal localhost URL for server-side calls — avoids nginx loopback
+const BACKEND_URL = process.env.BACKEND_INTERNAL_URL ?? "http://localhost:8000";
 
 export async function POST(request: NextRequest) {
   const { password } = await request.json();

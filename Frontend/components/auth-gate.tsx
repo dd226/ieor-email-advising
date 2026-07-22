@@ -68,6 +68,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
+            <a
+              href="mailto:ieor.admit.info@gmail.com?subject=Password Reset Request&body=Please reset the login password for the IEOR Email Advising system."
+              className="text-center text-sm text-gray-400 hover:text-blue-600 transition-colors"
+            >
+              Forgot password?
+            </a>
           </form>
         </div>
       </div>
