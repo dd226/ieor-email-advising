@@ -24,6 +24,9 @@ import {
   X,
   Check,
   Loader2,
+  Lock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { BACKEND_URL } from "@/lib/constants";
@@ -140,6 +143,17 @@ export default function SettingsTab() {
   // Profile state
   const [profile, setProfile] = useState<AdvisorProfile>(DEFAULT_PROFILE);
   const [profileDirty, setProfileDirty] = useState(false);
+
+  // Change Password state
+  const [pwOld, setPwOld] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwShowOld, setPwShowOld] = useState(false);
+  const [pwShowNew, setPwShowNew] = useState(false);
+  const [pwShowConfirm, setPwShowConfirm] = useState(false);
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState(false);
 
   // Knowledge Base state (from backend)
   const [kbArticles, setKbArticles] = useState<KBArticle[]>([]);
@@ -725,6 +739,53 @@ export default function SettingsTab() {
   }
 
   // ---------------------
+  // Password change
+  // ---------------------
+  function getPwChecks(pw: string) {
+    return {
+      length: pw.length >= 12,
+      upper: /[A-Z]/.test(pw),
+      lower: /[a-z]/.test(pw),
+      number: /\d/.test(pw),
+      special: /[!@#$%^&*()\-_=+\[\]{}|;:'",.<>?/~`\\]/.test(pw),
+    };
+  }
+
+  async function handleChangePassword() {
+    setPwError(null);
+    setPwSuccess(false);
+    const checks = getPwChecks(pwNew);
+    if (!Object.values(checks).every(Boolean)) {
+      setPwError("New password does not meet all requirements.");
+      return;
+    }
+    if (pwNew !== pwConfirm) {
+      setPwError("New passwords do not match.");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ old_password: pwOld, new_password: pwNew }),
+      });
+      if (res.ok) {
+        setPwSuccess(true);
+        setPwOld(""); setPwNew(""); setPwConfirm("");
+        setTimeout(() => setPwSuccess(false), 3000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setPwError(data.detail ?? "Failed to change password.");
+      }
+    } catch {
+      setPwError("Could not reach server.");
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
+  // ---------------------
   // Helper: Parse comma-separated string to array
   // ---------------------
   function parseCommaSeparated(str: string): string[] {
@@ -930,6 +991,132 @@ export default function SettingsTab() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Change Password Card - Full Width */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Lock className="h-5 w-5 text-blue-600" />
+            <div>
+              <CardTitle>Change Password</CardTitle>
+              <CardDescription>Update the login password for this application.</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Left: fields */}
+            <div className="space-y-4">
+              {/* Current password */}
+              <div>
+                <label className="text-sm font-medium">Current Password</label>
+                <div className="relative mt-2">
+                  <Input
+                    type={pwShowOld ? "text" : "password"}
+                    value={pwOld}
+                    onChange={(e) => setPwOld(e.target.value)}
+                    placeholder="Enter current password"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setPwShowOld((v) => !v)}
+                  >
+                    {pwShowOld ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              {/* New password */}
+              <div>
+                <label className="text-sm font-medium">New Password</label>
+                <div className="relative mt-2">
+                  <Input
+                    type={pwShowNew ? "text" : "password"}
+                    value={pwNew}
+                    onChange={(e) => setPwNew(e.target.value)}
+                    placeholder="Enter new password"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setPwShowNew((v) => !v)}
+                  >
+                    {pwShowNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              {/* Confirm password */}
+              <div>
+                <label className="text-sm font-medium">Confirm New Password</label>
+                <div className="relative mt-2">
+                  <Input
+                    type={pwShowConfirm ? "text" : "password"}
+                    value={pwConfirm}
+                    onChange={(e) => setPwConfirm(e.target.value)}
+                    placeholder="Re-enter new password"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setPwShowConfirm((v) => !v)}
+                  >
+                    {pwShowConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {pwNew && pwConfirm && pwNew !== pwConfirm && (
+                  <p className="text-xs text-red-600 mt-1">Passwords do not match.</p>
+                )}
+              </div>
+
+              {pwError && <p className="text-sm text-red-600">{pwError}</p>}
+              {pwSuccess && <p className="text-sm text-green-600 font-medium">Password changed successfully.</p>}
+
+              <div className="flex items-center gap-4 pt-1">
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={handleChangePassword}
+                  disabled={pwSaving || !pwOld || !pwNew || !pwConfirm}
+                >
+                  {pwSaving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Saving...</> : "Change Password"}
+                </Button>
+                <a
+                  href="mailto:ieor.admit.info@gmail.com?subject=Password Reset Request&body=Please reset the login password for the IEOR Email Advising system."
+                  className="text-sm text-muted-foreground hover:text-blue-600 underline underline-offset-2"
+                >
+                  Forgot password?
+                </a>
+              </div>
+            </div>
+
+            {/* Right: requirements checklist */}
+            <div className="rounded-lg border bg-muted/40 p-4">
+              <p className="text-sm font-medium mb-3">Password requirements</p>
+              {(() => {
+                const c = getPwChecks(pwNew);
+                const items: [boolean, string][] = [
+                  [c.length,  "At least 12 characters"],
+                  [c.upper,   "One uppercase letter (A–Z)"],
+                  [c.lower,   "One lowercase letter (a–z)"],
+                  [c.number,  "One number (0–9)"],
+                  [c.special, "One special character (!@#$%…)"],
+                ];
+                return (
+                  <ul className="space-y-2">
+                    {items.map(([met, label]) => (
+                      <li key={label} className="flex items-center gap-2 text-sm">
+                        {met
+                          ? <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                          : <X className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
+                        <span className={met ? "text-green-700" : "text-muted-foreground"}>{label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Knowledge Base Card - Full Width */}
       <Card>

@@ -2,6 +2,8 @@ import os
 import re
 import json
 import base64
+import hashlib
+import secrets
 import ipaddress
 import socket
 import stat
@@ -66,6 +68,43 @@ from googleapiclient.discovery import build
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+# ── Password management ───────────────────────────────────────────────────────
+AUTH_PASSWORD_FILE = DATA_DIR / "auth_password.json"
+_PASSWORD_ITERATIONS = 260_000
+
+def _hash_password(password: str) -> dict:
+    salt = secrets.token_hex(32)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PASSWORD_ITERATIONS)
+    return {"hash": key.hex(), "salt": salt}
+
+def _verify_password(password: str, stored: dict) -> bool:
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(), stored["salt"].encode(), _PASSWORD_ITERATIONS)
+    return secrets.compare_digest(key.hex(), stored["hash"])
+
+def _load_auth_password() -> dict | None:
+    if AUTH_PASSWORD_FILE.exists():
+        try:
+            return json.loads(AUTH_PASSWORD_FILE.read_text())
+        except Exception:
+            return None
+    return None
+
+def _save_auth_password(stored: dict) -> None:
+    AUTH_PASSWORD_FILE.write_text(json.dumps(stored))
+
+def _init_auth_password() -> None:
+    """On first startup, seed the password file from the env var."""
+    if not AUTH_PASSWORD_FILE.exists():
+        env_pw = os.getenv("ADVISOR_PASSWORD", "")
+        if env_pw:
+            _save_auth_password(_hash_password(env_pw))
+
+_init_auth_password()
+
+_PW_REQUIREMENTS = re.compile(
+    r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()\-_=+\[\]{}|;:\'",.<>?/~`\\]).{12,}$'
+)
 
 CONFIDENCE_THRESHOLD = 0.9  # >= this → auto, else review
 
@@ -1379,6 +1418,7 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
 
         ingested = 0
         auto_sent = 0
+        skipped = 0
         threshold = settings.auto_send_threshold or CONFIDENCE_THRESHOLD
 
         for m in messages:
@@ -1401,6 +1441,23 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
                 subject = subject.decode(enc or "utf-8", errors="ignore")
 
             from_name, from_addr = parseaddr(msg.get("From", ""))
+
+            # Skip bulk/marketing emails — they are not student inquiries.
+            # Bulk senders are required by RFC/CAN-SPAM to include these headers.
+            _is_bulk = (
+                msg.get("List-Unsubscribe")
+                or msg.get("List-Id")
+                or msg.get("Precedence", "").lower() in ("bulk", "list", "junk")
+                or msg.get("X-Mailer", "").lower() in ("mailchimp", "sendgrid", "constant contact")
+            )
+            if _is_bulk:
+                service.users().messages().modify(
+                    userId="me",
+                    id=msg_id,
+                    body={"removeLabelIds": ["UNREAD"]},
+                ).execute()
+                skipped += 1
+                continue
 
             latest_body, prior_chain = parse_email_chain(extract_text_from_email(msg))
             body = latest_body
@@ -1454,12 +1511,13 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
                     EmailStatus.auto if confidence >= threshold else EmailStatus.review
                 )
 
-            # Extract UNI from email address (format: UNI@columbia.edu)
+            # Extract UNI from email address — covers @columbia.edu, @*.columbia.edu, @barnard.edu
             extracted_uni = None
             if from_addr:
                 from_addr_lower = from_addr.lower()
-                if from_addr_lower.endswith("@columbia.edu"):
-                    extracted_uni = from_addr_lower.replace("@columbia.edu", "")
+                columbia_match = re.match(r'^(.+)@(?:[\w-]+\.)*columbia\.edu$', from_addr_lower)
+                if columbia_match:
+                    extracted_uni = columbia_match.group(1)
                 elif from_addr_lower.endswith("@barnard.edu"):
                     extracted_uni = from_addr_lower.replace("@barnard.edu", "")
 
@@ -1521,6 +1579,7 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
         return {
             "ingested": ingested,
             "auto_sent": auto_sent,
+            "skipped_bulk": skipped,
             "last_synced_at": settings.last_synced_at.isoformat()
             if settings.last_synced_at
             else None,
@@ -1883,3 +1942,44 @@ def metrics():
         }
     finally:
         db.close()
+
+
+# ── Password management endpoints ────────────────────────────────────────────
+
+class VerifyPasswordRequest(BaseModel):
+    password: str
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@app.post("/admin/verify-password")
+def verify_password_endpoint(req: VerifyPasswordRequest):
+    stored = _load_auth_password()
+    if stored:
+        ok = _verify_password(req.password, stored)
+    else:
+        # Fall back to env var if password file not yet seeded
+        ok = req.password == os.getenv("ADVISOR_PASSWORD", "")
+    if not ok:
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    return {"ok": True}
+
+@app.post("/admin/change-password")
+def change_password_endpoint(req: ChangePasswordRequest):
+    stored = _load_auth_password()
+    if stored:
+        if not _verify_password(req.old_password, stored):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+    else:
+        if req.old_password != os.getenv("ADVISOR_PASSWORD", ""):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    if not _PW_REQUIREMENTS.match(req.new_password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 12 characters and include uppercase, lowercase, a number, and a special character",
+        )
+
+    _save_auth_password(_hash_password(req.new_password))
+    return {"ok": True}
