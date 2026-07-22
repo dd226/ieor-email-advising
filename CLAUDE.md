@@ -49,7 +49,7 @@ Browser → https://advising.ieor.columbia.edu (port 443)
 ```
 
 - **nginx** is the only public entry point — ports 3000 and 8000 are blocked externally
-- **SSL cert:** Let's Encrypt at `/etc/letsencrypt/live/advising.ieor.columbia.edu/` (expires 2026-07-21, auto-renews)
+- **SSL cert:** Let's Encrypt at `/etc/letsencrypt/live/advising.ieor.columbia.edu/` (expires 2026-10-20, auto-renews via certbot timer)
 - **Firewall (UFW):** ports 22/tcp, 80/tcp, 443/tcp open only
 
 ### Why This Architecture
@@ -60,7 +60,7 @@ Browser → https://advising.ieor.columbia.edu (port 443)
 
 ---
 
-## Current Status (2026-04-27)
+## Current Status (2026-07-22)
 
 ### What Works ✅
 - Full HTTPS at `https://advising.ieor.columbia.edu` (padlock, valid cert)
@@ -75,7 +75,7 @@ Browser → https://advising.ieor.columbia.edu (port 443)
 - Knowledge base + reference corpus management UI (Settings tab)
 - Columbia branding, animated metrics, confidence badges
 - All services managed by systemd (auto-restart, start on boot)
-- Running branch: `team-integration`
+- Running branch: `cherry-pick-team-changes`
 
 ### What Needs Setup ⚠️
 - **Google OAuth Login:** Plan is ready (see Future Work). Needs new GCP Web OAuth Client ID before implementing.
@@ -217,9 +217,39 @@ server {
 | No LLM responses, only templates | OpenAI key placeholder | Paste valid key in `Backend/.env`, `sudo systemctl restart ieor-backend` |
 | Hydration warning on login | LastPass extension injecting HTML | Disable LastPass on this domain or use incognito — app works fine |
 | Cert renewal fails | Port 80 blocked | `sudo ufw allow 80/tcp` — must stay open always |
+| Cert renewal fails | Disk full | Pre-hook at `/etc/letsencrypt/renewal-hooks/pre/check-disk-space.sh` auto-cleans; if still failing, manually run `sudo journalctl --vacuum-size=200M` |
+| Dashboard fails to load, disk full | Log accumulation | Check `df -h /`; vacuum journald, truncate large files in `/var/log/` |
 | Frontend not picking up new env var | NEXT_PUBLIC vars baked in at compile | `sudo systemctl restart ieor-frontend` and wait ~30s for recompile |
 | Blank page or auth blink-reset after Next.js 16 upgrade | Missing `allowedDevOrigins` in next.config.mjs | Add `allowedDevOrigins: ["advising.ieor.columbia.edu"]` — restart service |
 | Stale `.next` cache after major dependency change | Old Turbopack runtime files incompatible with new version | `sudo systemctl stop ieor-frontend && rm -rf Frontend/.next && sudo systemctl start ieor-frontend` |
+
+---
+
+## Disk Management
+
+The VM has a 24G root disk. Log accumulation is the main growth risk.
+
+### Installed limits (as of 2026-07-22)
+| Config | Location | Limit |
+|--------|----------|-------|
+| journald | `/etc/systemd/journald.conf.d/limits.conf` | 200MB max, 1G free headroom, 2-week retention |
+| syslog logrotate | `/etc/logrotate.d/rsyslog` | daily, maxsize 100MB, keep 3 rotations |
+| Grafana | `/etc/grafana/grafana.ini` → `mode = console` | no disk files written |
+| certbot pre-hook | `/etc/letsencrypt/renewal-hooks/pre/check-disk-space.sh` | aborts renewal if <500MB free after cleanup |
+
+### Quick disk triage
+```bash
+df -h /                              # overall usage
+du -sh /var/log/* | sort -rh | head  # biggest log dirs
+sudo journalctl --disk-usage         # journal size
+```
+
+### Emergency cleanup
+```bash
+sudo journalctl --vacuum-size=200M
+sudo find /var/log -name "*.gz" -mtime +7 -delete
+sudo truncate -s 0 /var/log/syslog.1
+```
 
 ---
 
@@ -261,6 +291,16 @@ sudo ufw status
 - Investigated sending emails from `info@ieor.columbia.edu` (Grouper group) — unresolved, needs Columbia IT SMTP relay or service account
 - Discussed dev VM cloning strategy (hot snapshot from Windows Server, own SSL cert needed)
 - **Planned** Google OAuth login (Auth.js v5) — plan at `/home/dd226/.claude/plans/the-website-cuurent-has-tranquil-puddle.md` — NOT YET IMPLEMENTED
+
+### Session 5 (2026-07-22) — Disk cleanup + SSL renewal + log management
+- Disk hit 100% (24G full) — prevented certbot auto-renewal, took down backend
+- Freed ~5GB: vacuumed journald, removed old compressed syslogs, cleared Grafana logs
+- **Grafana logging** switched to console-only (`mode = console` in `/etc/grafana/grafana.ini`) — no more files in `/var/log/grafana/`
+- **Journald** capped: `/etc/systemd/journald.conf.d/limits.conf` — `SystemMaxUse=200M`, `SystemKeepFree=1G`, `MaxRetentionSec=2week`
+- **Logrotate** tightened: `/etc/logrotate.d/rsyslog` — daily rotation, `maxsize 100M`, keep 3 rotations
+- **SSL cert renewed** manually (expired 2026-07-21): `sudo certbot renew --webroot -w /var/www/html --force-renewal` — new expiry 2026-10-20
+- **Certbot pre-hook** installed: `/etc/letsencrypt/renewal-hooks/pre/check-disk-space.sh` — auto-cleans logs if <500MB free before renewal; dry-run confirmed working
+- nginx reload required after cert renewal for Chrome to pick up new cert
 
 ### Session 4 (2026-04-27) — SMTP relay + team integration merge
 - Implemented Proofpoint SMTP relay for sending from `info@ieor.columbia.edu` — all 3 send paths use `send_email_via_smtp()`, Gmail OAuth is receive-only
