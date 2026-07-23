@@ -1,5 +1,5 @@
 "use client"
-import { LayoutDashboard, Mail, BarChart3, Settings, Sparkles } from "lucide-react"
+import { LayoutDashboard, Mail, BarChart3, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SidebarNavProps {
@@ -13,7 +13,7 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
     { id: "emails", label: "Email Management", icon: Mail },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: Settings },
-    { id: "expo", label: "Senior Design Expo", icon: Sparkles },
+    // { id: "expo", label: "Senior Design Expo", icon: Sparkles },
   ]
 
   return (
@@ -21,7 +21,6 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
       {/* Logo/Title */}
       <div className="px-6 py-8 border-b border-sidebar-border">
         <h1 className="text-2xl font-extrabold text-white tracking-tight">Email Advising</h1>
-        <p className="text-xs text-white/50 mt-1">Columbia IEOR 2025</p>
       </div>
 
       {/* Navigation Items */}
@@ -46,13 +45,6 @@ export default function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) 
           )
         })}
       </nav>
-
-      {/* Footer with Credits */}
-      <div className="px-5 pt-4 pb-6 border-t border-sidebar-border">
-        <p className="text-[9px] text-sidebar-foreground/40 leading-tight text-center">
-          Developed by Emre Baser, Lara Jones,<br />Mayyada Shair, Yasemin Yuksel
-        </p>
-      </div>
     </aside>
   )
 }
