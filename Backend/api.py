@@ -812,6 +812,7 @@ class EmailORM(Base):
     received_at = Column(DateTime, nullable=False, index=True)
     approved_at = Column(DateTime, nullable=True)  # when advisor approved/sent
     assigned_to = Column(String, nullable=True)  # advisor assigned to this email
+    gmail_message_id = Column(String, nullable=True, index=True)  # authoritative dedup key
 
 
 # Create tables if they don't exist yet
@@ -837,6 +838,9 @@ def _migrate_db():
             conn.commit()
         if "approved_at" not in existing:
             conn.execute(text("ALTER TABLE emails ADD COLUMN approved_at TIMESTAMP"))
+            conn.commit()
+        if "gmail_message_id" not in existing:
+            conn.execute(text("ALTER TABLE emails ADD COLUMN gmail_message_id VARCHAR"))
             conn.commit()
         # PostgreSQL enums are strict — add any new values that weren't in the
         # original schema. SQLite ignores these safely.
@@ -1388,12 +1392,186 @@ def ingest_email(email_in: EmailIn):
 # Endpoint: sync emails from Gmail (OAuth)
 # =====================================================
 
+# Gmail's `after:` search operator is day-granular and excludes the named day,
+# so widen the window by this many days to avoid a same-day gap at the boundary.
+GMAIL_SYNC_LOOKBACK_DAYS = 2
+
+# This mailbox is subscribed to the department's own advising LISTSERV, whose
+# List-Id every relayed message (including real student inquiries) carries.
+INTAKE_LIST_ID = "ieor-info.columbia.edu"
+
+
+def _ingest_gmail_message(
+    service, db: Session, settings: "EmailSettingsORM", msg_id: str
+) -> str:
+    """
+    Fetch a single Gmail message, classify it, and store it.
+    Returns one of: "ingested", "duplicate", "skipped_bulk", "skipped_empty".
+    Marks the message read in Gmail only if it was unread — safe to call on
+    messages that are already read (e.g. during a historical backfill).
+    """
+    msg_data = (
+        service.users()
+        .messages()
+        .get(userId="me", id=msg_id, format="raw")
+        .execute()
+    )
+    was_unread = "UNREAD" in msg_data.get("labelIds", [])
+
+    def _mark_read():
+        if was_unread:
+            service.users().messages().modify(
+                userId="me",
+                id=msg_id,
+                body={"removeLabelIds": ["UNREAD"]},
+            ).execute()
+
+    raw_b64 = msg_data["raw"]
+    raw_bytes = base64.urlsafe_b64decode(raw_b64.encode("utf-8"))
+    msg = email.message_from_bytes(raw_bytes)
+
+    raw_subject = msg.get("Subject", "")
+    decoded = decode_header(raw_subject)[0]
+    subject, enc = decoded
+    if isinstance(subject, bytes):
+        subject = subject.decode(enc or "utf-8", errors="ignore")
+
+    from_name, from_addr = parseaddr(msg.get("From", ""))
+
+    # Skip bulk/marketing emails — they are not student inquiries.
+    # Bulk senders are required by RFC/CAN-SPAM to include these headers.
+    # NOTE: this inbox is itself a subscriber to the department's own
+    # `ieor-info` LISTSERV, which stamps List-Id and Precedence: list on
+    # every message it relays — including genuine one-to-one student
+    # inquiries. Those two headers alone are not a useful bulk signal here;
+    # only flag a List-Id that belongs to some *other* list, and only treat
+    # Precedence "bulk"/"junk" (not LISTSERV's "list") as automated mail.
+    _list_id = msg.get("List-Id") or ""
+    _is_bulk = (
+        msg.get("List-Unsubscribe")
+        or (_list_id and INTAKE_LIST_ID not in _list_id)
+        or msg.get("Precedence", "").lower() in ("bulk", "junk")
+        or msg.get("X-Mailer", "").lower() in ("mailchimp", "sendgrid", "constant contact")
+    )
+    if _is_bulk:
+        _mark_read()
+        return "skipped_bulk"
+
+    latest_body, prior_chain = parse_email_chain(extract_text_from_email(msg))
+    body = latest_body
+    if not body.strip():
+        _mark_read()
+        return "skipped_empty"
+
+    # Duplicate check: Gmail message ID is authoritative; subject+body is a
+    # fallback for rows ingested before gmail_message_id was tracked.
+    existing = (
+        db.query(EmailORM)
+        .filter(
+            (EmailORM.gmail_message_id == msg_id)
+            | ((EmailORM.subject == subject) & (EmailORM.body == body))
+        )
+        .first()
+    )
+    if existing:
+        if not existing.gmail_message_id:
+            existing.gmail_message_id = msg_id
+            db.add(existing)
+            db.commit()
+        _mark_read()
+        return "duplicate"
+
+    sync_metadata: dict = {"student_name": from_name}
+    if prior_chain:
+        sync_metadata["_conversation_history"] = prior_chain
+    result = advisor.process_query(body, sync_metadata)
+    confidence = float(result.confidence or 0.0)
+    suggested_reply = result.body
+
+    # Guardrail: check for personal / sensitive content
+    guardrail = personal_detector.check(body)
+    if guardrail.is_personal:
+        status_enum = EmailStatus.personal
+        suggested_reply = (
+            "Hello {name},\n\n"
+            "Thank you for reaching out. Your message has been flagged for personal "
+            "attention from our advising team. An advisor will follow up with you "
+            "directly.\n\n"
+            "If you need immediate support, please contact:\n"
+            "• Columbia Counseling and Psychological Services (CPS): (212) 854-2878\n"
+            "• Columbia Health: (212) 854-2284\n\n"
+            "Best,\nAcademic Advising Team"
+        ).format(name=from_name or "there")
+    else:
+        threshold = settings.auto_send_threshold or CONFIDENCE_THRESHOLD
+        status_enum = (
+            EmailStatus.auto if confidence >= threshold else EmailStatus.review
+        )
+
+    # Extract UNI from email address — covers @columbia.edu, @*.columbia.edu, @barnard.edu
+    extracted_uni = None
+    if from_addr:
+        from_addr_lower = from_addr.lower()
+        columbia_match = re.match(r'^(.+)@(?:[\w-]+\.)*columbia\.edu$', from_addr_lower)
+        if columbia_match:
+            extracted_uni = columbia_match.group(1)
+        elif from_addr_lower.endswith("@barnard.edu"):
+            extracted_uni = from_addr_lower.replace("@barnard.edu", "")
+
+    refs_json = json.dumps([
+        {"title": r.title, "url": r.url}
+        for r in result.references if r.url
+    ]) if not guardrail.is_personal else None
+
+    email_obj = EmailORM(
+        student_name=from_name or None,
+        uni=extracted_uni,
+        email_address=from_addr,  # Store sender's email for replies!
+        subject=subject or "(no subject)",
+        body=body,
+        confidence=confidence,
+        status=status_enum,
+        suggested_reply=suggested_reply,
+        references_json=refs_json,
+        received_at=datetime.utcnow(),
+        gmail_message_id=msg_id,
+    )
+    db.add(email_obj)
+    db.commit()
+    db.refresh(email_obj)
+
+    # Optional auto-send via SMTP relay
+    if status_enum == EmailStatus.auto and settings.auto_send_enabled and from_addr:
+        try:
+            send_email_via_smtp(
+                from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
+                to_addr=from_addr,
+                subject=subject,
+                body=suggested_reply,
+            )
+            email_obj.status = EmailStatus.sent
+            db.add(email_obj)
+            db.commit()
+            return "ingested_auto_sent"
+        except Exception as exc:
+            print("Failed to auto-send reply:", exc)
+
+    _mark_read()
+    return "ingested"
+
 
 @app.post("/emails/sync")
 def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
     """
-    Use Gmail API (OAuth) to pull unread emails, run them through the advisor,
+    Use Gmail API (OAuth) to pull new emails, run them through the advisor,
     store them in SQLite, and optionally auto-send replies.
+
+    Queries `is:unread` (the common case) OR anything received since the last
+    successful sync, regardless of read state — this covers messages that get
+    marked read outside the app (e.g. someone triaging the inbox manually in
+    Gmail's web UI), which would otherwise be invisible to an unread-only sync.
+    Gmail message ID is the authoritative dedup key, so widening the query is
+    safe: already-ingested messages are skipped without being reprocessed.
     """
     db = SessionLocal()
     try:
@@ -1407,168 +1585,48 @@ def sync_emails(limit: int = Query(default=20, ge=1, le=100)):
 
         service = build("gmail", "v1", credentials=creds)
 
-        # Pull unread messages
+        query = "is:unread"
+        if settings.last_synced_at:
+            after_date = (
+                settings.last_synced_at - timedelta(days=GMAIL_SYNC_LOOKBACK_DAYS)
+            ).strftime("%Y/%m/%d")
+            query = f"(is:unread) OR (after:{after_date})"
+
         res = (
             service.users()
             .messages()
-            .list(userId="me", q="is:unread", maxResults=limit)
+            .list(userId="me", q=query, maxResults=limit)
             .execute()
         )
         messages = res.get("messages", [])
 
+        # Skip already-ingested messages before doing any expensive fetch/LLM work.
+        candidate_ids = [m["id"] for m in messages]
+        known_ids = set()
+        if candidate_ids:
+            known_ids = {
+                row[0]
+                for row in db.query(EmailORM.gmail_message_id)
+                .filter(EmailORM.gmail_message_id.in_(candidate_ids))
+                .all()
+            }
+
         ingested = 0
         auto_sent = 0
         skipped = 0
-        threshold = settings.auto_send_threshold or CONFIDENCE_THRESHOLD
 
         for m in messages:
             msg_id = m["id"]
-            msg_data = (
-                service.users()
-                .messages()
-                .get(userId="me", id=msg_id, format="raw")
-                .execute()
-            )
-
-            raw_b64 = msg_data["raw"]
-            raw_bytes = base64.urlsafe_b64decode(raw_b64.encode("utf-8"))
-            msg = email.message_from_bytes(raw_bytes)
-
-            raw_subject = msg.get("Subject", "")
-            decoded = decode_header(raw_subject)[0]
-            subject, enc = decoded
-            if isinstance(subject, bytes):
-                subject = subject.decode(enc or "utf-8", errors="ignore")
-
-            from_name, from_addr = parseaddr(msg.get("From", ""))
-
-            # Skip bulk/marketing emails — they are not student inquiries.
-            # Bulk senders are required by RFC/CAN-SPAM to include these headers.
-            _is_bulk = (
-                msg.get("List-Unsubscribe")
-                or msg.get("List-Id")
-                or msg.get("Precedence", "").lower() in ("bulk", "list", "junk")
-                or msg.get("X-Mailer", "").lower() in ("mailchimp", "sendgrid", "constant contact")
-            )
-            if _is_bulk:
-                service.users().messages().modify(
-                    userId="me",
-                    id=msg_id,
-                    body={"removeLabelIds": ["UNREAD"]},
-                ).execute()
+            if msg_id in known_ids:
+                continue
+            outcome = _ingest_gmail_message(service, db, settings, msg_id)
+            if outcome == "skipped_bulk":
                 skipped += 1
-                continue
-
-            latest_body, prior_chain = parse_email_chain(extract_text_from_email(msg))
-            body = latest_body
-            if not body.strip():
-                # Mark as read but skip storing empty messages
-                service.users().messages().modify(
-                    userId="me",
-                    id=msg_id,
-                    body={"removeLabelIds": ["UNREAD"]},
-                ).execute()
-                continue
-
-            # Naive duplicate check (subject + body)
-            existing = (
-                db.query(EmailORM)
-                .filter(EmailORM.subject == subject, EmailORM.body == body)
-                .first()
-            )
-            if existing:
-                # Still mark as read
-                service.users().messages().modify(
-                    userId="me",
-                    id=msg_id,
-                    body={"removeLabelIds": ["UNREAD"]},
-                ).execute()
-                continue
-
-            sync_metadata: dict = {"student_name": from_name}
-            if prior_chain:
-                sync_metadata["_conversation_history"] = prior_chain
-            result = advisor.process_query(body, sync_metadata)
-            confidence = float(result.confidence or 0.0)
-            suggested_reply = result.body
-
-            # Guardrail: check for personal / sensitive content
-            guardrail = personal_detector.check(body)
-            if guardrail.is_personal:
-                status_enum = EmailStatus.personal
-                suggested_reply = (
-                    "Hello {name},\n\n"
-                    "Thank you for reaching out. Your message has been flagged for personal "
-                    "attention from our advising team. An advisor will follow up with you "
-                    "directly.\n\n"
-                    "If you need immediate support, please contact:\n"
-                    "• Columbia Counseling and Psychological Services (CPS): (212) 854-2878\n"
-                    "• Columbia Health: (212) 854-2284\n\n"
-                    "Best,\nAcademic Advising Team"
-                ).format(name=from_name or "there")
-            else:
-                status_enum = (
-                    EmailStatus.auto if confidence >= threshold else EmailStatus.review
-                )
-
-            # Extract UNI from email address — covers @columbia.edu, @*.columbia.edu, @barnard.edu
-            extracted_uni = None
-            if from_addr:
-                from_addr_lower = from_addr.lower()
-                columbia_match = re.match(r'^(.+)@(?:[\w-]+\.)*columbia\.edu$', from_addr_lower)
-                if columbia_match:
-                    extracted_uni = columbia_match.group(1)
-                elif from_addr_lower.endswith("@barnard.edu"):
-                    extracted_uni = from_addr_lower.replace("@barnard.edu", "")
-
-            refs_json = json.dumps([
-                {"title": r.title, "url": r.url}
-                for r in result.references if r.url
-            ]) if not guardrail.is_personal else None
-
-            email_obj = EmailORM(
-                student_name=from_name or None,
-                uni=extracted_uni,
-                email_address=from_addr,  # Store sender's email for replies!
-                subject=subject or "(no subject)",
-                body=body,
-                confidence=confidence,
-                status=status_enum,
-                suggested_reply=suggested_reply,
-                references_json=refs_json,
-                received_at=datetime.utcnow(),
-            )
-            db.add(email_obj)
-            db.commit()
-            db.refresh(email_obj)
-            ingested += 1
-
-            # Optional auto-send via SMTP relay
-            if (
-                status_enum == EmailStatus.auto
-                and settings.auto_send_enabled
-                and from_addr
-            ):
-                try:
-                    send_email_via_smtp(
-                        from_addr=os.getenv("SMTP_FROM", "info@ieor.columbia.edu"),
-                        to_addr=from_addr,
-                        subject=subject,
-                        body=suggested_reply,
-                    )
-                    email_obj.status = EmailStatus.sent
-                    db.add(email_obj)
-                    db.commit()
-                    auto_sent += 1
-                except Exception as exc:
-                    print("Failed to auto-send reply:", exc)
-
-            # Mark the original message as read
-            service.users().messages().modify(
-                userId="me",
-                id=msg_id,
-                body={"removeLabelIds": ["UNREAD"]},
-            ).execute()
+            elif outcome == "ingested":
+                ingested += 1
+            elif outcome == "ingested_auto_sent":
+                ingested += 1
+                auto_sent += 1
 
         et_tz = dt_timezone(timedelta(hours=-5))
         settings.last_synced_at = datetime.now(et_tz).replace(tzinfo=None)
