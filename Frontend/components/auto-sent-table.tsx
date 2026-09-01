@@ -229,7 +229,7 @@ export default function AutoSentTable({
                   {email.uni ?? "—"}
                 </td>
 
-                <td className="px-4 py-2 min-w-0">
+                <td className="px-4 py-2 max-w-0 w-full">
                   <span className="block truncate" title={email.subject}>
                     {email.subject}
                   </span>
